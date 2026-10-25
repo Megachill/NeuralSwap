@@ -167,6 +167,8 @@ enum Msg {
     UpdateDone(Result<PathBuf, String>),
     ImportProgress(f32, String),
     ImportDone(Result<PathBuf, String>),
+    /// A core zip holds builds we do not recognise: ask before installing.
+    CoreNeedsConfirm(PathBuf, String),
 }
 
 #[derive(Clone)]
@@ -213,6 +215,9 @@ pub struct App {
     pub update: UpdateState,
     /// Payload import in progress: (fraction, status).
     pub importing: Option<(f32, String)>,
+    pub core_link: String,
+    pub core_sha: String,
+    pub core_confirm: Option<(PathBuf, String)>,
     ctx: egui::Context,
 }
 
@@ -314,6 +319,9 @@ impl App {
             pending_open: None,
             update: UpdateState::Idle,
             importing: None,
+            core_link: String::new(),
+            core_sha: String::new(),
+            core_confirm: None,
             ctx: ctx.clone(),
         };
         app.history = app.history_store.list(&[]);
@@ -383,6 +391,59 @@ impl App {
             let result = import_into(&src, &dest, &mut progress).map(|_| dest);
             let _ = tx.send(Msg::ImportDone(result));
             ctx.request_repaint();
+        });
+    }
+
+    /// Where downloaded / imported DLSS 5 files are assembled.
+    pub fn payload_target(&self) -> PathBuf {
+        std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("payload"))).unwrap_or_else(|| PathBuf::from("payload"))
+    }
+
+    fn run_setup(&mut self, work: impl FnOnce(&mut dyn FnMut(f32, String)) -> Result<(), SetupError> + Send + 'static) {
+        if self.importing.is_some() || self.job.is_some() {
+            return;
+        }
+        self.core_confirm = None;
+        self.importing = Some((0.0, "Starting".into()));
+        let tx = self.tx.clone();
+        let ctx = self.ctx.clone();
+        let dest = self.payload_target();
+        std::thread::spawn(move || {
+            let mut progress = |f: f32, t: String| {
+                let _ = tx.send(Msg::ImportProgress(f, t));
+                ctx.request_repaint();
+            };
+            let msg = match work(&mut progress) {
+                Ok(()) => Msg::ImportDone(Ok(dest)),
+                Err(SetupError::Unknown(zip, why)) => Msg::CoreNeedsConfirm(zip, why),
+                Err(SetupError::Failed(e)) => Msg::ImportDone(Err(e)),
+            };
+            let _ = tx.send(msg);
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn download_official(&mut self) {
+        let dest = self.payload_target();
+        self.run_setup(move |p| crate::components::download_official(&dest, p).map_err(SetupError::Failed));
+    }
+
+    /// Core files from a link (`zip` None) or a local zip.
+    pub fn import_core(&mut self, zip: Option<PathBuf>, allow_unknown: bool) {
+        let dest = self.payload_target();
+        let link = self.core_link.trim().to_string();
+        let sha = self.core_sha.trim().to_string();
+        self.run_setup(move |p| {
+            let zip = match zip {
+                Some(z) => z,
+                None => crate::components::download_link(&link, p).map_err(SetupError::Failed)?,
+            };
+            p(0.95, "Checking the core files".into());
+            match crate::components::import_core(&zip, &dest, allow_unknown, Some(&sha)) {
+                Ok(_) => Ok(()),
+                Err(e) if e.starts_with("unrecognised build") => Err(SetupError::Unknown(zip, e)),
+                Err(e) => Err(SetupError::Failed(e)),
+            }
         });
     }
 
@@ -667,6 +728,10 @@ impl App {
                 }
                 Msg::UpdateProgress(f, t) => self.update = UpdateState::Applying(f, t),
                 Msg::ImportProgress(f, t) => self.importing = Some((f, t)),
+                Msg::CoreNeedsConfirm(zip, why) => {
+                    self.importing = None;
+                    self.core_confirm = Some((zip, why));
+                }
                 Msg::ImportDone(result) => {
                     self.importing = None;
                     match result {
@@ -674,8 +739,13 @@ impl App {
                             self.settings.payload_dir = None;
                             self.settings_dirty = true;
                             self.reload_payload();
-                            let ok = self.payload.as_ref().map(|p| p.root == dest).unwrap_or(false);
-                            self.toast(if ok { "DLSS 5 files imported." } else { "Imported, but another payload folder takes priority. Check Settings." });
+                            let here = self.payload.as_ref().map(|p| p.root == dest).unwrap_or(false);
+                            let complete = self.payload.as_ref().map(|p| p.complete()).unwrap_or(false);
+                            self.toast(match (complete, here) {
+                                (true, true) => "DLSS 5 files ready.",
+                                (true, false) => "Done. Another complete payload folder is in use. Check Settings.",
+                                (false, _) => "Done. Still missing: see the DLSS 5 files card.",
+                            });
                         }
                         Err(e) => self.toast(format!("Import failed: {e}")),
                     }
@@ -829,4 +899,9 @@ pub fn import_into(src: &std::path::Path, dest: &std::path::Path, progress: &mut
     std::fs::rename(&staging, dest).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_dir_all(&old);
     Ok(())
+}
+
+pub enum SetupError {
+    Failed(String),
+    Unknown(PathBuf, String),
 }

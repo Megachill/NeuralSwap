@@ -33,6 +33,8 @@ pub struct Installer {
     mark: Option<egui::TextureHandle>,
     existing: Option<String>,
     has_payload: bool,
+    dir: String,
+    existing_dir: Option<PathBuf>,
 }
 
 pub fn run(mode: Mode) -> eframe::Result<()> {
@@ -68,6 +70,8 @@ pub fn run(mode: Mode) -> eframe::Result<()> {
                 rx: None,
                 mark,
                 existing: setup::installed_version(),
+                dir: setup::install_dir().display().to_string(),
+                existing_dir: setup::existing_install_dir(),
                 has_payload: std::env::current_exe().map(|e| crate::dist::appended_entry_count(&e) > 0).unwrap_or(false),
             }))
         }),
@@ -80,10 +84,12 @@ impl Installer {
         self.rx = Some(rx);
         self.running = true;
         let (mode, desktop, remove_settings) = (self.mode, self.desktop, self.remove_settings);
+        let dir = setup::normalize_choice(std::path::Path::new(self.dir.trim()));
+        self.dir = dir.display().to_string();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let result = match mode {
-                Mode::Install => setup::install(desktop, &mut |f, s| {
+                Mode::Install => setup::install(&dir, desktop, &mut |f, s| {
                     let _ = tx.send(Msg::Progress(f, s));
                     ctx.request_repaint();
                 })
@@ -145,8 +151,22 @@ impl eframe::App for Installer {
                     };
                     ui.label(text);
                     ui.add_space(6.0);
-                    widgets::kv_row(ui, "Install folder", RichText::new(setup::install_dir().display().to_string()).size(12.5));
                     ui.add_enabled_ui(!self.running && self.result.is_none(), |ui| {
+                        ui.label(RichText::new("Install folder").size(12.5).color(MUTED));
+                        ui.horizontal(|ui| {
+                            ui.add(egui::TextEdit::singleline(&mut self.dir).desired_width(430.0));
+                            if widgets::ghost_button(ui, "Browse…").clicked() {
+                                if let Some(p) = rfd::FileDialog::new().set_title("Choose where to install NeuralSwap").pick_folder() {
+                                    self.dir = setup::normalize_choice(&p).display().to_string();
+                                }
+                            }
+                        });
+                        if let Some(old) = &self.existing_dir {
+                            let chosen = setup::normalize_choice(std::path::Path::new(self.dir.trim()));
+                            if chosen.to_string_lossy().to_lowercase() != old.to_string_lossy().to_lowercase() {
+                                ui.label(RichText::new(format!("NeuralSwap will move here from {} (DLSS files included).", old.display())).size(12.0).color(AMBER));
+                            }
+                        }
                         ui.checkbox(&mut self.desktop, "Create a desktop shortcut");
                         ui.checkbox(&mut self.launch, "Start NeuralSwap when finished");
                     });
@@ -176,6 +196,16 @@ impl eframe::App for Installer {
                 }
                 Some(Err(e)) => {
                     ui.label(RichText::new(format!("✖ {e}")).color(RED));
+                    let needs_admin = e.starts_with("No write access");
+                    ui.horizontal(|ui| {
+                        if widgets::ghost_button(ui, "Choose another folder").clicked() {
+                            self.result = None;
+                        }
+                        if needs_admin && widgets::ghost_button(ui, "Run setup as administrator").clicked() {
+                            run_elevated();
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    });
                 }
                 None => {}
             }
@@ -213,4 +243,13 @@ impl eframe::App for Installer {
             });
         });
     }
+}
+
+fn run_elevated() {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let Ok(exe) = std::env::current_exe() else { return };
+    let w = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let (verb, file) = (w("runas"), w(&exe.to_string_lossy()));
+    unsafe { ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
 }

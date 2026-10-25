@@ -2,6 +2,7 @@
 
 mod art;
 mod cli;
+mod components;
 mod core;
 mod dist;
 mod library;

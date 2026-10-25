@@ -141,24 +141,78 @@ fn update_banner(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// "Import DLSS 5 files" from a zip or a folder, with progress.
+/// Status and setup of the DLSS 5 files: official downloads plus the two
+/// core files that only come from a zip or a link the user chooses.
 fn import_row(app: &mut App, ui: &mut Ui) {
-    if let Some((f, t)) = app.importing.clone() {
-        ui.label(RichText::new(format!("{t}  ({:.0}%)", f * 100.0)).color(AMBER));
-        return;
+    use crate::components::{self, CORE, OFFICIAL};
+    let root = app.payload.as_ref().map(|p| p.root.clone()).unwrap_or_else(|| app.payload_target());
+    let busy = app.importing.clone();
+    let missing = components::official_missing(&root);
+    ui.add_space(4.0);
+    ui.label(RichText::new("1 · Official components").strong());
+    if missing.is_empty() {
+        let names: Vec<String> = OFFICIAL.iter().filter(|c| !c.label.contains("licence") && !c.label.contains("header")).map(|c| format!("{} {}", c.label, c.version)).collect();
+        ui.label(RichText::new(format!("✔ {}", names.join(" · "))).size(12.5).color(GREEN_HI));
+    } else {
+        let mb: u64 = missing.iter().map(|c| c.size).sum::<u64>() >> 20;
+        ui.label(RichText::new(format!("Missing: {}. Downloaded from NVIDIA, reshade.me and GitHub, pinned and SHA-256 verified.", missing.iter().map(|c| c.label).collect::<Vec<_>>().join(", "))).size(12.5).color(MUTED));
+        ui.add_enabled_ui(busy.is_none(), |ui| {
+            if widgets::accent_button(ui, &format!("⬇  Download official components (~{mb} MB)")).clicked() {
+                app.download_official();
+            }
+        });
     }
-    ui.horizontal(|ui| {
-        if widgets::accent_button(ui, "Import DLSS 5 files (.zip)…").clicked() {
-            if let Some(f) = rfd::FileDialog::new().add_filter("NeuralSwap payload", &["zip"]).pick_file() {
-                app.import_payload(f);
+    ui.add_space(6.0);
+    ui.label(RichText::new("2 · DLSS 5 core files").strong());
+    for c in CORE {
+        let ok = components::core_present(&root, c);
+        let (mark, color) = if ok { ("✔", GREEN_HI) } else if c.required { ("✖", RED) } else { ("–", DIM) };
+        ui.label(RichText::new(format!("{mark} {} ({}){}", c.label, c.name, if c.required { "" } else { " · optional" })).size(12.5).color(color));
+    }
+    ui.label(RichText::new("These have no official download. Use the core zip (or full payload zip) you were given, or a link to it: OneDrive, Google Drive, Dropbox and direct links work.").size(12.0).color(MUTED));
+    ui.add_enabled_ui(busy.is_none(), |ui| {
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut app.core_link).hint_text("https://… link to NeuralSwap-dlss5-core.zip").desired_width(340.0));
+            ui.add(egui::TextEdit::singleline(&mut app.core_sha).hint_text("SHA-256 (optional)").desired_width(170.0));
+            if widgets::accent_button(ui, "Download from link").clicked() && !app.core_link.trim().is_empty() {
+                app.import_core(None, false);
             }
-        }
-        if widgets::ghost_button(ui, "Import from folder…").clicked() {
-            if let Some(d) = rfd::FileDialog::new().pick_folder() {
-                app.import_payload(d);
+        });
+        ui.horizontal(|ui| {
+            if widgets::ghost_button(ui, "Import core zip…").clicked() {
+                if let Some(f) = rfd::FileDialog::new().add_filter("DLSS 5 core zip", &["zip"]).pick_file() {
+                    app.import_core(Some(f), false);
+                }
             }
-        }
+            if widgets::ghost_button(ui, "Import full payload zip…").clicked() {
+                if let Some(f) = rfd::FileDialog::new().add_filter("NeuralSwap payload", &["zip"]).pick_file() {
+                    app.import_payload(f);
+                }
+            }
+            if widgets::ghost_button(ui, "Import from folder…").clicked() {
+                if let Some(d) = rfd::FileDialog::new().pick_folder() {
+                    app.import_payload(d);
+                }
+            }
+        });
     });
+    if let Some((zip, why)) = app.core_confirm.clone() {
+        egui::Frame::new().fill(RED_DARK).stroke(Stroke::new(1.0, RED)).corner_radius(theme::radius(8)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+            ui.label(RichText::new(format!("⚠ {why}.")).color(Color32::from_rgb(255, 190, 186)));
+            ui.label(RichText::new("These files are loaded into your games. A modified build from an unknown source can contain malware.").size(12.5).color(Color32::from_rgb(240, 210, 206)));
+            ui.horizontal(|ui| {
+                if widgets::ghost_button(ui, "Cancel").clicked() {
+                    app.core_confirm = None;
+                }
+                if ui.add(egui::Button::new(RichText::new("Install anyway").color(Color32::WHITE)).fill(Color32::from_rgb(150, 40, 38))).clicked() {
+                    app.import_core(Some(zip.clone()), true);
+                }
+            });
+        });
+    }
+    if let Some((f, t)) = busy {
+        ui.label(RichText::new(format!("{t}  ({:.0}%)", f * 100.0)).color(AMBER));
+    }
 }
 
 fn page_header(ui: &mut Ui, title: &str, subtitle: Option<String>, right: impl FnOnce(&mut Ui)) {
@@ -239,10 +293,9 @@ pub fn home(app: &mut App, ui: &mut Ui) {
                     ui.set_width(half - 34.0);
                     ui.label(RichText::new("Payload").font(theme::bold(15.0)));
                     ui.add_space(4.0);
-                    match &app.payload {
+                    match app.payload.clone().filter(|p| p.complete()) {
                         None => {
-                            ui.label(RichText::new("The DLSS 5 files are not installed yet. Import the NeuralSwap-payload.zip you were given, or a payload folder (an original DLSS 5 Swapper install is found automatically).").color(AMBER));
-                            ui.add_space(4.0);
+                            ui.label(RichText::new("The DLSS 5 files are not set up yet (an original DLSS 5 Swapper install is found automatically).").color(AMBER));
                             import_row(app, ui);
                         }
                         Some(p) => {

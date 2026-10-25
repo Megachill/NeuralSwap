@@ -1,5 +1,5 @@
-//! Per-user install and uninstall, no administrator rights needed:
-//! %LOCALAPPDATA%\Programs\NeuralSwap, Start-menu / desktop shortcuts and an
+//! Install and uninstall without administrator rights: a folder the user
+//! chooses (C:\NeuralSwap by default), Start-menu / desktop shortcuts and an
 //! entry in Settings → Apps (HKCU uninstall key).
 
 use crate::dist;
@@ -13,9 +13,60 @@ use windows_sys::Win32::System::Registry::{
 
 const UNINSTALL_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NeuralSwap";
 
+/// Where a fresh install goes unless the user picks another folder.
+pub fn default_install_dir() -> PathBuf {
+    let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+    PathBuf::from(format!("{drive}\\NeuralSwap"))
+}
+
+/// The folder of the current installation, from its Apps entry.
+pub fn existing_install_dir() -> Option<PathBuf> {
+    crate::library::reg_string(HKEY_CURRENT_USER, UNINSTALL_KEY, "InstallLocation")
+        .map(PathBuf::from)
+        .filter(|d| d.join("NeuralSwap.exe").is_file())
+}
+
+/// The installed location, else the default for a new install.
 pub fn install_dir() -> PathBuf {
-    let base = std::env::var("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."));
-    base.join("Programs").join("NeuralSwap")
+    existing_install_dir().unwrap_or_else(default_install_dir)
+}
+
+/// A picked folder always gets its own NeuralSwap subfolder, so the install
+/// (and an uninstall) never mixes with other files: D:\Apps → D:\Apps\NeuralSwap.
+pub fn normalize_choice(picked: &Path) -> PathBuf {
+    let leaf = picked.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if leaf == "neuralswap" { picked.to_path_buf() } else { picked.join("NeuralSwap") }
+}
+
+/// Files and folders that belong to an installation — the only things an
+/// uninstall or a move ever deletes.
+const MANAGED: &[&str] = &["NeuralSwap.exe", "NeuralSwap.exe.old", "payload", "payload.new", "payload.old"];
+
+fn can_write(dir: &Path) -> bool {
+    if fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(".neuralswap_write_test");
+    let ok = fs::write(&probe, b"x").is_ok();
+    let _ = fs::remove_file(&probe);
+    ok
+}
+
+fn move_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    if fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    // Another drive: copy, then delete the original.
+    fn copy(a: &Path, b: &Path) -> std::io::Result<()> {
+        fs::create_dir_all(b)?;
+        for e in fs::read_dir(a)?.flatten() {
+            let t = b.join(e.file_name());
+            if e.file_type()?.is_dir() { copy(&e.path(), &t)? } else { fs::copy(e.path(), t).map(|_| ())? }
+        }
+        Ok(())
+    }
+    copy(from, to)?;
+    fs::remove_dir_all(from)
 }
 
 fn same_path(a: &Path, b: &Path) -> bool {
@@ -114,10 +165,13 @@ fn make_shortcut(lnk: &Path, target: &Path) -> bool {
 
 /// Copies the app and extracts the payload carried by this setup exe.
 /// `progress` gets (fraction 0..1, status text).
-pub fn install(desktop: bool, progress: &mut dyn FnMut(f32, String)) -> Result<PathBuf, String> {
+pub fn install(dir: &Path, desktop: bool, progress: &mut dyn FnMut(f32, String)) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let dir = install_dir();
-    fs::create_dir_all(&dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
+    let dir = dir.to_path_buf();
+    if !can_write(&dir) {
+        return Err(format!("No write access to {} — choose another folder, or run the setup as administrator (NeuralSwap also needs to write there later for DLSS files and updates)", dir.display()));
+    }
+    let previous = existing_install_dir().filter(|old| !same_path(old, &dir));
     let target = dir.join("NeuralSwap.exe");
     progress(0.02, "Copying NeuralSwap.exe".into());
     // A running older copy keeps its image open; it can still be renamed.
@@ -144,6 +198,21 @@ pub fn install(desktop: bool, progress: &mut dyn FnMut(f32, String)) -> Result<P
         fs::rename(&staging, &payload).map_err(|e| e.to_string())?;
     }
 
+    // Moving an existing install: bring its DLSS files along when this setup
+    // carries none, then clear out only NeuralSwap's own files there.
+    if let Some(old) = &previous {
+        progress(0.9, format!("Moving from {}", old.display()));
+        let old_payload = old.join("payload");
+        if !payload.exists() && old_payload.is_dir() {
+            move_dir(&old_payload, &payload).map_err(|e| format!("Could not move the DLSS 5 files: {e}"))?;
+        }
+        for name in MANAGED {
+            let p = old.join(name);
+            if p.is_dir() { let _ = fs::remove_dir_all(&p); } else { let _ = fs::remove_file(&p); }
+        }
+        let _ = fs::remove_dir(old); // only when empty
+    }
+
     progress(0.97, "Creating shortcuts".into());
     let (start, desk) = shortcut_paths();
     make_shortcut(&start, &target);
@@ -159,22 +228,30 @@ pub fn install(desktop: bool, progress: &mut dyn FnMut(f32, String)) -> Result<P
 /// Removes shortcuts, the Apps entry and the install folder. Game backups
 /// (`_DLSS5_Backup`) are never touched; settings optionally go too.
 pub fn uninstall(remove_settings: bool) -> Result<(), String> {
+    // Read the location before the Apps entry that records it is deleted.
+    let dir = install_dir();
     let (start, desk) = shortcut_paths();
     let _ = fs::remove_file(start);
     let _ = fs::remove_file(desk);
     unregister();
-    let dir = install_dir();
-    let _ = fs::remove_dir_all(dir.join("payload"));
+    for name in ["payload", "payload.new", "payload.old"] {
+        let _ = fs::remove_dir_all(dir.join(name));
+    }
     if remove_settings {
         let _ = fs::remove_dir_all(crate::state::data_dir());
     }
     // The running exe cannot delete itself: a hidden helper waits for this
-    // process to exit (the user may keep the window open), then removes it.
+    // process to exit (the user may keep the window open), then removes only
+    // NeuralSwap's own files, and the folder only if nothing else is in it.
     use std::os::windows::process::CommandExt;
+    let q = |p: &Path| p.to_string_lossy().replace('\'', "''");
+    let files: Vec<String> = MANAGED.iter().map(|m| format!("'{}'", q(&dir.join(m)))).collect();
     let script = format!(
-        "Wait-Process -Id {} -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; Remove-Item -LiteralPath '{}' -Recurse -Force -ErrorAction SilentlyContinue",
+        "Wait-Process -Id {} -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; foreach ($p in @({})) {{ Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue }}; if (-not (Get-ChildItem -LiteralPath '{}' -Force -ErrorAction SilentlyContinue)) {{ Remove-Item -LiteralPath '{}' -Force -ErrorAction SilentlyContinue }}",
         std::process::id(),
-        dir.to_string_lossy().replace('\'', "''")
+        files.join(","),
+        q(&dir),
+        q(&dir)
     );
     std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])

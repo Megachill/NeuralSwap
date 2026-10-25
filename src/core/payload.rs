@@ -190,6 +190,16 @@ pub fn candidates(setting: Option<&Path>) -> Vec<PathBuf> {
     out
 }
 
+impl Payload {
+    /// Everything an install needs: the neural runtime and the RenoDX add-on.
+    pub fn complete(&self) -> bool {
+        self.has_neural_rendering() && self.addon.is_some()
+    }
+}
+
+/// The first complete payload, else the first partial one.
 pub fn locate(setting: Option<&Path>) -> Option<Payload> {
-    candidates(setting).into_iter().find_map(|dir| scan_payload(&dir))
+    let found: Vec<Payload> = candidates(setting).into_iter().filter_map(|dir| scan_payload(&dir)).collect();
+    let pos = found.iter().position(|p| p.complete()).unwrap_or(0);
+    found.into_iter().nth(pos)
 }

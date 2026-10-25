@@ -18,9 +18,11 @@ The executable is `target\release\NeuralSwap.exe`.
 
 ## Install / share
 
-Run **NeuralSwap-Setup.exe** from the latest release. It installs per user to
-`%LOCALAPPDATA%\Programs\NeuralSwap` (no administrator rights), adds Start-menu and
-desktop shortcuts and an entry in Settings → Apps for uninstalling. The setup is
+Run **NeuralSwap-Setup.exe** from the latest release. It installs to a folder you
+choose (`C:\NeuralSwap` by default, no administrator rights), adds Start-menu and
+desktop shortcuts and an entry in Settings → Apps for uninstalling. A picked folder
+gets its own `NeuralSwap` subfolder; reinstalling into another folder moves the app
+and its DLSS files there. Uninstall removes only NeuralSwap's own files. The setup is
 the app itself with the payload zip appended — no installer framework needed.
 
 ## Auto-update (no backend)
@@ -40,12 +42,29 @@ To release:
 then create a GitHub release tagged `v<version>` (version from `Cargo.toml`) and
 attach the files from `release\`.
 
-With `-NoPayload` the release carries only the app: the public setup is ~20 MB and
-the DLSS 5 files are imported after installing (Home or Settings → **Import DLSS 5
-files**, from a `NeuralSwap-payload.zip` or a folder; an original DLSS 5 Swapper
-install is found automatically). A full setup for private sharing is written to
-`release\private\` — never upload that folder. Updates then replace only the app
-and keep the local DLSS files.
+With `-NoPayload` the release carries only the app (public setup ~20 MB). For
+private sharing, `release\private\` gets `NeuralSwap-dlss5-core.zip` (the two core
+files, ~116 MB), a full payload zip and a full setup — never upload that folder.
+Updates replace only the app and keep the local DLSS files.
+
+## Getting the DLSS 5 files
+
+Home or Settings → **DLSS 5 files**, in two steps:
+
+1. **Official components** — one click downloads them from their publishers, pinned to
+   an exact release and SHA-256 verified (~68 MB): NVIDIA DLSS 310.9.16 + licence
+   (NVIDIA/DLSS on GitHub), ReShade 6.8.0 add-on build (reshade.me), DLSS5-Feeder
+   0.15.1 (its GitHub release), VORT shaders and the ReShade headers.
+2. **Core files** — `nvngx_dlssnr.dll` (the DLSS 5 neural runtime, a modified NVIDIA
+   build that fails NVIDIA's signature check) and the RenoDX DLSS 5 add-ons have no
+   official source. Import `NeuralSwap-dlss5-core.zip` from a file or from a link you
+   control (OneDrive, Google Drive, Dropbox and direct links are converted to direct
+   downloads), optionally with its SHA-256. Builds whose hash NeuralSwap does not know
+   are refused unless you choose **Install anyway**. NeuralSwap never downloads these
+   from third-party mirrors.
+
+A full `NeuralSwap-payload.zip` or an existing payload folder can still be imported
+as a whole, and an original DLSS 5 Swapper install is found automatically.
 
 ## Payload
 
@@ -100,6 +119,8 @@ NeuralSwap restore "<game dir>"
 NeuralSwap library
 NeuralSwap payload
 NeuralSwap import-payload <zip or folder>
+NeuralSwap get-official <payload dir>
+NeuralSwap import-core <zip or link> <payload dir> [--sha256 <hash>] [--allow-unknown]
 NeuralSwap pack-release [out dir] [--notes "text"] [--no-payload]
 ```
 

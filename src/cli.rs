@@ -36,7 +36,7 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 /// Returns Some(exit code) when the arguments named a CLI command.
 pub fn run(args: &[String]) -> Option<i32> {
     let cmd = args.get(1)?.as_str();
-    if !matches!(cmd, "scan" | "install" | "restore" | "library" | "payload" | "pack-release" | "import-payload" | "--help" | "-h") {
+    if !matches!(cmd, "scan" | "install" | "restore" | "library" | "payload" | "pack-release" | "import-payload" | "get-official" | "import-core" | "install-to" | "uninstall-now" | "--help" | "-h") {
         return None;
     }
     attach_console();
@@ -72,7 +72,7 @@ pub fn run(args: &[String]) -> Option<i32> {
                 Ok(m) => {
                     println!("
 Release v{} ready in {}", m.version, out.display());
-                    println!("Create a GitHub release tagged v{} and attach every file in that folder.", m.version);
+                    println!("Create a GitHub release tagged v{} and attach the files in that folder (never the private folder).", m.version);
                     0
                 }
                 Err(e) => {
@@ -81,6 +81,44 @@ Release v{} ready in {}", m.version, out.display());
                 }
             }
         }
+        "get-official" => {
+            let Some(dest) = args.get(2).map(PathBuf::from) else { return Some(usage()) };
+            let mut last = String::new();
+            match crate::components::download_official(&dest, &mut |_, t| {
+                if t != last {
+                    if t.ends_with("ready") { println!("  {t}"); }
+                    last = t;
+                }
+            }) {
+                Ok(()) => { println!("Official components ready in {}", dest.display()); 0 }
+                Err(e) => { println!("FAILED: {e}"); 2 }
+            }
+        }
+        "import-core" => {
+            let (Some(src), Some(dest)) = (args.get(2), args.get(3).map(PathBuf::from)) else { return Some(usage()) };
+            let zip = if src.starts_with("http") {
+                match crate::components::download_link(src, &mut |_, _| {}) { Ok(z) => z, Err(e) => { println!("FAILED: {e}"); return Some(2) } }
+            } else { PathBuf::from(src) };
+            match crate::components::import_core(&zip, &dest, args.iter().any(|a| a == "--allow-unknown"), flag(args, "--sha256").as_deref()) {
+                Ok(found) => {
+                    for f in found { println!("  {} {}", f.name, if f.known { "(known build)" } else { "(UNRECOGNISED build)" }); }
+                    0
+                }
+                Err(e) => { println!("FAILED: {e}"); 2 }
+            }
+        }
+        "install-to" => {
+            let Some(dir) = args.get(2).map(PathBuf::from) else { return Some(usage()) };
+            let dir = crate::setup::normalize_choice(&dir);
+            match crate::setup::install(&dir, !args.iter().any(|a| a == "--no-desktop"), &mut |_, _| {}) {
+                Ok(exe) => { println!("Installed {}", exe.display()); 0 }
+                Err(e) => { println!("FAILED: {e}"); 2 }
+            }
+        }
+        "uninstall-now" => match crate::setup::uninstall(args.iter().any(|a| a == "--remove-settings")) {
+            Ok(()) => { println!("Uninstalled (files are removed once this process exits)"); 0 }
+            Err(e) => { println!("FAILED: {e}"); 2 }
+        },
         "import-payload" => {
             let Some(src) = args.get(2).map(PathBuf::from) else { return Some(usage()) };
             let dest = std::env::current_exe().unwrap().parent().unwrap().join("payload");
@@ -165,7 +203,9 @@ Release v{} ready in {}", m.version, out.display());
 
 fn usage() -> i32 {
     println!(
-        "NeuralSwap {}\n\n  scan    <game dir>\n  install <game dir> [--route native|renodx|feeder] [--exe <rel path>] [--accept-anticheat]\n  restore <game dir>\n  library\n  payload\n  pack-release [out dir] [--notes \"text\"] [--no-payload]\n\nWithout arguments the desktop app starts.",
+        "NeuralSwap {}\n\n  scan    <game dir>\n  install <game dir> [--route native|renodx|feeder] [--exe <rel path>] [--accept-anticheat]\n  restore <game dir>\n  library\n  payload\n  import-payload <zip or folder>\n  get-official <payload dir>\n  import-core <zip or link> <payload dir> [--sha256 <hash>] [--allow-unknown]\n  install-to <folder> [--no-desktop]    (setup exe: silent install)
+  uninstall-now [--remove-settings]
+  pack-release [out dir] [--notes \"text\"] [--no-payload]\n\nWithout arguments the desktop app starts.",
         env!("CARGO_PKG_VERSION")
     );
     1

@@ -150,6 +150,11 @@ pub fn pack_release(payload_root: Option<&Path>, publish_payload: bool, out_dir:
         let full = zip_dir.join(if publish_payload { SETUP_NAME } else { "NeuralSwap-Setup-Full.exe" });
         write_setup(&app_bytes, &zip_path, &full)?;
         log(format!("Full setup: {} ({} MB)", full.display(), fs::metadata(&full)?.len() >> 20));
+        if !publish_payload {
+            let core = zip_dir.join(crate::components::CORE_ZIP);
+            crate::components::pack_core(root, &core)?;
+            log(format!("Core files (share privately): {} ({} MB)", core.display(), fs::metadata(&core)?.len() >> 20));
+        }
         if publish_payload {
             payload = Some(PayloadAsset {
                 id: payload_id(root),
