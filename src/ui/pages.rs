@@ -304,7 +304,7 @@ pub fn home(app: &mut App, ui: &mut Ui) {
                             widgets::kv_row(ui, t("DLSS Super Resolution"), RichText::new(v(&p.dlss_version)).color(GREEN_HI));
                             widgets::kv_row(ui, t("DLSS 5 Neural Rendering"), RichText::new(v(&p.nr_version)).color(GREEN_HI));
                             widgets::kv_row(ui, t("ReShade (add-on build)"), RichText::new(v(&p.reshade_version)));
-                            widgets::kv_row(ui, t("RenoDX DLSS 5 consumer"), RichText::new(if p.addon.is_some() { t("bundled") } else { t("missing") }).color(if p.addon.is_some() { TEXT } else { RED }));
+                            widgets::kv_row(ui, t("RenoDX DLSS 5 consumer"), RichText::new(p.addon.as_deref().and_then(crate::core::pe::file_version).unwrap_or_else(|| (if p.addon.is_some() { t("bundled") } else { t("missing") }).to_string())).color(if p.addon.is_some() { TEXT } else { RED }));
                             widgets::kv_row(ui, t("RenoDX DLSS Tool (multipass)"), RichText::new(if p.multipass_addon.is_some() { t("bundled") } else { "—" }));
                             widgets::kv_row(ui, t("DLSS5-Feeder"), RichText::new(if p.feeder.ok64 { format!("{} verified", crate::core::payload::FEEDER_VERSION) } else { t("unavailable").into() }).color(if p.feeder.ok64 { TEXT } else { AMBER }));
                             ui.label(RichText::new(p.root.display().to_string()).size(11.5).color(DIM));

@@ -191,9 +191,10 @@ pub fn candidates(setting: Option<&Path>) -> Vec<PathBuf> {
 }
 
 impl Payload {
-    /// Everything an install needs: the neural runtime and the RenoDX add-on.
+    /// Everything an install needs: the neural runtime, the RenoDX add-on
+    /// and the ReShade add-on build that loads it.
     pub fn complete(&self) -> bool {
-        self.has_neural_rendering() && self.addon.is_some()
+        self.has_neural_rendering() && self.addon.is_some() && self.reshade64.is_some()
     }
 }
 

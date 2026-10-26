@@ -633,6 +633,16 @@ impl App {
                 let _ = tx.send(Msg::JobEvent(e));
                 ctx.request_repaint();
             };
+            let mut cfg = cfg;
+            match crate::components::ensure_official(&cfg.payload, &mut log) {
+                Ok(p) => cfg.payload = p,
+                Err(err) => {
+                    log(Event { level: crate::core::Level::Error, text: err.to_string() });
+                    let _ = tx.send(Msg::JobDone { key, error: Some(err) });
+                    ctx.request_repaint();
+                    return;
+                }
+            }
             let error = match apply::install(&cfg, &mut log) {
                 Ok(m) => {
                     store.record(&cfg.game_dir, Some(&m), "install", &name);
@@ -743,6 +753,8 @@ impl App {
                 }
                 Msg::JobDone { key, error } => {
                     self.job = None;
+                    // An install may have downloaded official components.
+                    self.reload_payload();
                     match error {
                         None => self.toast(t("Done.")),
                         Some(e) => {

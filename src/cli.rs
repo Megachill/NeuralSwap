@@ -178,6 +178,14 @@ Release v{} ready in {}", m.version, out.display());
                 payload: p,
                 companions: settings.companions.clone(),
             };
+            let mut cfg = cfg;
+            match crate::components::ensure_official(&cfg.payload, &mut print_event) {
+                Ok(p) => cfg.payload = p,
+                Err(e) => {
+                    println!("\nFAILED [{}]: {e}", e.code);
+                    return Some(2);
+                }
+            }
             match apply::install(&cfg, &mut print_event) {
                 Ok(m) => {
                     HistoryStore { file: data_dir().join("history.jsonl") }.record(&dir, Some(&m), "install", &s.game_name);

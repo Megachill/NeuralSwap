@@ -299,6 +299,19 @@ fn write_sources_note(payload: &Path) {
     let _ = write_file(payload, "feeder/licenses/THIRD-PARTY-SOURCES.txt", text.as_bytes());
 }
 
+/// Before an install: fetch any missing official components into the
+/// payload (pinned + verified), and return the refreshed payload.
+pub fn ensure_official(payload: &crate::core::payload::Payload, log: &mut dyn FnMut(crate::core::Event)) -> crate::core::Result<crate::core::payload::Payload> {
+    use crate::core::Event;
+    if official_missing(&payload.root).is_empty() {
+        return Ok(payload.clone());
+    }
+    log(Event::info(crate::i18n::t("Downloading the official components first (NVIDIA DLSS, ReShade, Feeder)…")));
+    download_official(&payload.root, &mut |_, _| {}).map_err(|e| crate::core::fail("errComponentDownload", e))?;
+    log(Event::ok(crate::i18n::t("Official components downloaded and SHA-256 verified.")));
+    Ok(crate::core::payload::scan_payload(&payload.root).unwrap_or_else(|| payload.clone()))
+}
+
 /// Turns common share links into direct downloads.
 pub fn direct_link(url: &str) -> String {
     let u = url.trim();

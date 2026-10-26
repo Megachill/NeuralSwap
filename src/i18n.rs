@@ -145,7 +145,7 @@ mod tests {
     fn every_ui_string_is_translated() {
         let re = Regex::new(r#"(?:\bt|tr!)\(\s*"((?:[^"\\]|\\.)*)""#).unwrap();
         let mut keys: Vec<String> = Vec::new();
-        for file in ["src/ui/pages.rs", "src/ui/sheet.rs", "src/ui/widgets.rs", "src/ui/installer.rs", "src/ui/mod.rs"] {
+        for file in ["src/ui/pages.rs", "src/ui/sheet.rs", "src/ui/widgets.rs", "src/ui/installer.rs", "src/ui/mod.rs", "src/components.rs"] {
             let text = std::fs::read_to_string(file).unwrap();
             for c in re.captures_iter(&text) {
                 keys.push(unescape(&c[1]));
