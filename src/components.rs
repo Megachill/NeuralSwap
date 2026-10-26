@@ -136,7 +136,12 @@ pub const CORE: &[Core] = &[
         label: "DLSS 5 neural runtime",
         required: true,
         dests: &["streamline/nvngx_dlssnr.dll"],
-        known: &["8270b350cd82de5ce89806872cdd6b6a9249b80836b91bbeb3573470744cc206"],
+        known: &[
+            // 310.8, first model (modified)
+            "8270b350cd82de5ce89806872cdd6b6a9249b80836b91bbeb3573470744cc206",
+            // 310.9.16, faster model (modified, signature removed, adds .nrcubin)
+            "cdfa6c1ec784867182164c7836f324f087b5c9f374d0c9fe46f54999feabf3ed",
+        ],
     },
     Core {
         name: "renodx-dlss5.addon64",
@@ -150,7 +155,11 @@ pub const CORE: &[Core] = &[
         label: "RenoDX DLSS Tool (multipass)",
         required: false,
         dests: &["feeder/host64/renodx-dlss.addon64"],
-        known: &["1d855cf226857dce890cffbf7206ba9b6497ce1d471b217c1c8b44b6cd5d27e9"],
+        known: &[
+            "1d855cf226857dce890cffbf7206ba9b6497ce1d471b217c1c8b44b6cd5d27e9",
+            // ShortFuse 0.2026.1016.1704
+            "a8fd34b531fd22c3dbd008ed8fd3cbfcca2fb451729e19cd1fc2e4c85b5068d4",
+        ],
     },
 ];
 
@@ -160,12 +169,31 @@ fn sha256_bytes(b: &[u8]) -> String {
     format!("{:x}", Sha256::digest(b))
 }
 
-/// Which official components are missing or differ from the pinned build.
+/// Whether `path` is the pinned build. Hashes are remembered per (path, size,
+/// mtime), as the Home page asks every frame.
+fn matches_pin(path: &Path, sha256: &str) -> bool {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::SystemTime;
+    static SEEN: once_cell::sync::Lazy<Mutex<HashMap<(PathBuf, u64, SystemTime), String>>> = once_cell::sync::Lazy::new(Default::default);
+    let Ok(meta) = fs::metadata(path) else { return false };
+    let key = (path.to_path_buf(), meta.len(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
+    if let Some(h) = SEEN.lock().unwrap().get(&key) {
+        return h == sha256;
+    }
+    let Ok(h) = dist::sha256_file(path) else { return false };
+    let ok = h == sha256;
+    SEEN.lock().unwrap().insert(key, h);
+    ok
+}
+
+/// Which official components are missing or differ from the pinned build
+/// (an older payload may carry an earlier NVIDIA DLSS, for example).
 pub fn official_missing(payload: &Path) -> Vec<&'static Official> {
     OFFICIAL
         .iter()
         .filter(|c| match &c.unpack {
-            Unpack::File(rel) => !payload.join(rel).is_file(),
+            Unpack::File(rel) => !matches_pin(&payload.join(rel), c.sha256),
             Unpack::Zip(map) => map.iter().any(|(_, d)| if d.ends_with('/') { !payload.join(d).is_dir() } else { !payload.join(d).is_file() }),
         })
         .collect()
@@ -450,6 +478,18 @@ pub fn pack_core(payload: &Path, out: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stale_official_file_counts_as_missing() {
+        let dir = std::env::temp_dir().join(format!("ns-pin-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let header = OFFICIAL.iter().find(|c| c.label == "ReShade shader header").unwrap();
+        let Unpack::File(rel) = header.unpack else { unreachable!() };
+        write_file(&dir, rel, b"an older header").unwrap();
+        assert!(official_missing(&dir).iter().any(|c| c.label == header.label));
+        assert!(!matches_pin(&dir.join(rel), header.sha256));
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn share_links_become_direct() {

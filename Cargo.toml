@@ -1,6 +1,6 @@
 [package]
 name = "neural-swap"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 description = "Native Rust DLSS 5 (Neural Rendering) installer for your games"
 license = "MIT"
