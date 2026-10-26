@@ -22,6 +22,9 @@ enum Action {
     OpenFolder,
     Admin,
     ToggleWarnings,
+    OpenMagpie,
+    MagpieReleases,
+    LocateMagpie,
 }
 
 fn mb(bytes: u64) -> String {
@@ -118,6 +121,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 }
             }
             Action::Admin => app.restart_as_admin(),
+            Action::OpenMagpie => app.open_magpie(),
+            Action::MagpieReleases => {
+                let _ = open::that(crate::magpie::RELEASES_URL);
+            }
+            Action::LocateMagpie => app.locate_magpie(),
             Action::ToggleWarnings => {
                 if let Some(s) = app.sheet.as_mut() {
                     s.warnings_open = !s.warnings_open;
@@ -289,6 +297,11 @@ fn body(app: &App, ui: &mut Ui, key: &str, width: f32, actions: &mut Vec<Action>
             });
         });
         ui.add_space(10.0);
+
+        if scan.anti_cheat {
+            magpie_card(app, ui, actions);
+            ui.add_space(10.0);
+        }
 
         // ---- warnings
         let mut notes: Vec<(String, bool)> = Vec::new();
@@ -496,5 +509,70 @@ fn anti_cheat_dialog(app: &App, ctx: &egui::Context, key: &str, actions: &mut Ve
                     }
                 });
             });
+        });
+}
+
+/// The anti-cheat-safe alternative: Magpie processes the captured window
+/// outside the game, so there is nothing for anti-cheat to block.
+fn magpie_card(app: &App, ui: &mut Ui, actions: &mut Vec<Action>) {
+    let ink = Color32::from_rgb(190, 220, 250);
+    egui::Frame::new()
+        .fill(Color32::from_rgb(14, 24, 36))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(52, 98, 150)))
+        .corner_radius(theme::radius(12))
+        .inner_margin(egui::Margin::same(14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(t("🛡  Anti-cheat safe route: Magpie")).font(theme::bold(15.0)).color(BLUE));
+            ui.label(RichText::new(t("Magpie captures the game window from outside and runs DLSS 5 neural rendering on that image. Nothing is loaded into the game, so anti-cheat has nothing to block — the same way OBS or Discord capture a game.")).size(12.5).color(ink));
+            ui.add_space(4.0);
+            ui.label(RichText::new(t("Trade-offs")).strong().color(ink));
+            for line in [
+                t("• Colour only: no depth or engine motion vectors, so expect more ghosting than an in-game install. HUD and text are processed too."),
+                t("• Adds roughly a frame of latency — noticeable in fast shooters."),
+                t("• SDR only. Run the game in borderless or windowed mode."),
+            ] {
+                ui.label(RichText::new(line).size(12.5).color(ink));
+            }
+            ui.add_space(4.0);
+            ui.label(RichText::new(t("How to use it")).strong().color(ink));
+            for line in [
+                t("1. Start the game in borderless or windowed mode."),
+                t("2. In Magpie, choose a scaling profile with the DLSSNR effect."),
+                t("3. Focus the game and press Magpie's scale hotkey (Alt+Shift+A by default)."),
+            ] {
+                ui.label(RichText::new(line).size(12.5).color(ink));
+            }
+            ui.add_space(6.0);
+            match &app.magpie {
+                None => {
+                    ui.label(RichText::new(t("Looking for Magpie…")).size(12.5).color(MUTED));
+                }
+                Some(Some(m)) => {
+                    let version = m.version.clone().unwrap_or_default();
+                    ui.label(RichText::new(tr!("✔ Magpie {} found: {}", version, m.exe.display())).size(12.5).color(GREEN_HI));
+                    ui.horizontal(|ui| {
+                        let label = if crate::magpie::is_running() { t("Magpie is running — open it") } else { t("Open Magpie") };
+                        if widgets::accent_button(ui, label).clicked() {
+                            actions.push(Action::OpenMagpie);
+                        }
+                        if widgets::ghost_button(ui, t("Check for a newer release")).clicked() {
+                            actions.push(Action::MagpieReleases);
+                        }
+                    });
+                }
+                Some(None) => {
+                    ui.label(RichText::new(t("Magpie is not installed (or not found). It is a separate open-source app (GPL-3.0); NeuralSwap only links to it.")).size(12.5).color(MUTED));
+                    ui.horizontal(|ui| {
+                        if widgets::accent_button(ui, t("⬇  Get Magpie from GitHub")).clicked() {
+                            actions.push(Action::MagpieReleases);
+                        }
+                        if widgets::ghost_button(ui, t("Locate Magpie.exe…")).clicked() {
+                            actions.push(Action::LocateMagpie);
+                        }
+                    });
+                }
+            }
+            ui.label(RichText::new(t("Download it only from the official releases page — fake copies of DLSS 5 tools are circulating. Its NGX_OTA_Switch.bat pauses NVIDIA's automatic DLSS updates for all games; use its 'Restore default' option to undo that.")).size(11.5).color(DIM));
         });
 }

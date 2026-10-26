@@ -47,6 +47,18 @@ private sharing, `release\private\` gets `NeuralSwap-dlss5-core.zip` (the two co
 files, ~116 MB), a full payload zip and a full setup — never upload that folder.
 Updates replace only the app and keep the local DLSS files.
 
+## Anti-cheat games: Magpie
+
+Injecting ReShade into a game protected by EasyAntiCheat / BattlEye usually fails
+(Gray Zone Warfare refuses to start) and risks a ban. For those games the game page
+offers the **safe route**: [Magpie (SAOG0721's experimental fork)](https://github.com/SAOG0721/Magpie)
+captures the game window from outside and runs DLSS 5 neural rendering on the image,
+so nothing is loaded into the game. Trade-offs: colour only (no depth / motion
+vectors, HUD processed too), about a frame of extra latency, SDR only, borderless or
+windowed mode. NeuralSwap does **not** bundle Magpie (GPL-3.0); it detects an installed
+copy (running process, common folders or a path set in Settings), launches it, and
+links to the official releases.
+
 ## Languages
 
 English, Deutsch and Español. The first start follows the Windows display language;

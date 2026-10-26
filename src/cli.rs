@@ -36,7 +36,7 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 /// Returns Some(exit code) when the arguments named a CLI command.
 pub fn run(args: &[String]) -> Option<i32> {
     let cmd = args.get(1)?.as_str();
-    if !matches!(cmd, "scan" | "install" | "restore" | "library" | "payload" | "pack-release" | "import-payload" | "get-official" | "import-core" | "install-to" | "uninstall-now" | "--help" | "-h") {
+    if !matches!(cmd, "scan" | "install" | "restore" | "library" | "payload" | "pack-release" | "import-payload" | "get-official" | "import-core" | "install-to" | "uninstall-now" | "magpie" | "--help" | "-h") {
         return None;
     }
     attach_console();
@@ -119,6 +119,13 @@ Release v{} ready in {}", m.version, out.display());
             Ok(()) => { println!("Uninstalled (files are removed once this process exits)"); 0 }
             Err(e) => { println!("FAILED: {e}"); 2 }
         },
+        "magpie" => {
+            match crate::magpie::detect(settings.magpie_path.as_deref()) {
+                Some(m) => println!("Magpie {} at {}{}", m.version.unwrap_or_default(), m.exe.display(), if crate::magpie::is_running() { " (running)" } else { "" }),
+                None => println!("Magpie not found. Official releases: {}", crate::magpie::RELEASES_URL),
+            }
+            0
+        }
         "import-payload" => {
             let Some(src) = args.get(2).map(PathBuf::from) else { return Some(usage()) };
             let dest = std::env::current_exe().unwrap().parent().unwrap().join("payload");
@@ -203,9 +210,7 @@ Release v{} ready in {}", m.version, out.display());
 
 fn usage() -> i32 {
     println!(
-        "NeuralSwap {}\n\n  scan    <game dir>\n  install <game dir> [--route native|renodx|feeder] [--exe <rel path>] [--accept-anticheat]\n  restore <game dir>\n  library\n  payload\n  import-payload <zip or folder>\n  get-official <payload dir>\n  import-core <zip or link> <payload dir> [--sha256 <hash>] [--allow-unknown]\n  install-to <folder> [--no-desktop]    (setup exe: silent install)
-  uninstall-now [--remove-settings]
-  pack-release [out dir] [--notes \"text\"] [--no-payload]\n\nWithout arguments the desktop app starts.",
+        "NeuralSwap {}\n\n  scan    <game dir>\n  install <game dir> [--route native|renodx|feeder] [--exe <rel path>] [--accept-anticheat]\n  restore <game dir>\n  library\n  payload\n  import-payload <zip or folder>\n  get-official <payload dir>\n  import-core <zip or link> <payload dir> [--sha256 <hash>] [--allow-unknown]\n  install-to <folder> [--no-desktop]    (setup exe: silent install)\n  uninstall-now [--remove-settings]\n  magpie                                (find Magpie for anti-cheat games)\n  pack-release [out dir] [--notes \"text\"] [--no-payload]\n\nWithout arguments the desktop app starts.",
         env!("CARGO_PKG_VERSION")
     );
     1

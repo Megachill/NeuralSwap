@@ -49,6 +49,7 @@ pub struct CardInfo<'a> {
     pub installed: bool,
     pub disabled_reason: Option<&'a str>,
     pub scanning: bool,
+    pub anti_cheat: bool,
 }
 
 pub fn game_card(ui: &mut Ui, size: egui::Vec2, cover: Option<&TextureHandle>, info: &CardInfo) -> Response {
@@ -100,6 +101,9 @@ pub fn game_card(ui: &mut Ui, size: egui::Vec2, cover: Option<&TextureHandle>, i
     };
     if let Some((text, fg, bg, br)) = badge {
         pill(ui, cover_rect.right_top() + vec2(-6.0, 6.0), Align2::RIGHT_TOP, text, fg, bg, br);
+    }
+    if info.anti_cheat && info.disabled_reason.is_none() {
+        pill(ui, cover_rect.left_top() + vec2(6.0, 6.0), Align2::LEFT_TOP, t("🛡 Anti-cheat"), BLUE, Color32::from_rgba_unmultiplied(10, 20, 34, 230), Color32::from_rgb(52, 98, 150));
     }
 
     // Status line: DLSS version and add-on state.

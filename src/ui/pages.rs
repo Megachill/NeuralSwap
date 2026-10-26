@@ -553,6 +553,7 @@ pub fn games(app: &mut App, ui: &mut Ui) {
                             installed: g.installed_route().is_some(),
                             disabled_reason: reason,
                             scanning: g.scanning && scan.is_none(),
+                            anti_cheat: scan.map(|s| s.anti_cheat).unwrap_or(false),
                         };
                         let resp = widgets::game_card(ui, vec2(card_w, card_h), app.covers.get(&g.key), &info);
                         let key = g.key.clone();
@@ -801,6 +802,34 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
                 app.mark_settings_dirty();
                 app.discover();
             }
+        });
+        ui.add_space(12.0);
+
+        widgets::card_frame().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(t("Anti-cheat games: Magpie")).font(theme::bold(15.0)));
+            ui.label(RichText::new(t("For games with anti-cheat, NeuralSwap suggests Magpie: it processes the captured window outside the game instead of injecting into it. NeuralSwap does not include Magpie; it finds an installed copy and links to the official releases.")).size(12.5).color(MUTED));
+            ui.add_space(4.0);
+            let status = match &app.magpie {
+                None => RichText::new(t("Looking for Magpie…")).color(MUTED),
+                Some(Some(m)) => RichText::new(format!("{}  {}", m.exe.display(), m.version.clone().unwrap_or_default())).color(GREEN_HI),
+                Some(None) => RichText::new(t("not found")).color(AMBER),
+            };
+            widgets::kv_row(ui, t("Magpie"), status);
+            ui.horizontal(|ui| {
+                if widgets::accent_button(ui, t("Locate Magpie.exe…")).clicked() {
+                    app.locate_magpie();
+                }
+                if app.settings.magpie_path.is_some() && widgets::ghost_button(ui, t("Use automatic")).clicked() {
+                    app.settings.magpie_path = None;
+                    app.mark_settings_dirty();
+                    app.detect_magpie();
+                }
+                if widgets::ghost_button(ui, t("Search again")).clicked() {
+                    app.detect_magpie();
+                }
+                ui.hyperlink_to(t("Magpie on GitHub"), crate::magpie::REPO_URL);
+            });
         });
         ui.add_space(12.0);
 

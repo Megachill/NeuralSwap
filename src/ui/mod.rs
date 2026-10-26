@@ -170,6 +170,7 @@ enum Msg {
     ImportDone(Result<PathBuf, String>),
     /// A core zip holds builds we do not recognise: ask before installing.
     CoreNeedsConfirm(PathBuf, String),
+    Magpie(Option<crate::magpie::Magpie>),
 }
 
 #[derive(Clone)]
@@ -219,6 +220,8 @@ pub struct App {
     pub core_link: String,
     pub core_sha: String,
     pub core_confirm: Option<(PathBuf, String)>,
+    /// Some(None) once a search found nothing; None while it runs.
+    pub magpie: Option<Option<crate::magpie::Magpie>>,
     ctx: egui::Context,
 }
 
@@ -324,6 +327,7 @@ impl App {
             core_link: String::new(),
             core_sha: String::new(),
             core_confirm: None,
+            magpie: None,
             ctx: ctx.clone(),
         };
         app.history = app.history_store.list(&[]);
@@ -340,6 +344,7 @@ impl App {
             };
         }
         app.discover();
+        app.detect_magpie();
         if app.settings.auto_update_check {
             app.check_updates(false);
         }
@@ -394,6 +399,38 @@ impl App {
             let _ = tx.send(Msg::ImportDone(result));
             ctx.request_repaint();
         });
+    }
+
+    /// Looks for Magpie on a worker thread (it may scan a few folders).
+    pub fn detect_magpie(&mut self) {
+        self.magpie = None;
+        let tx = self.tx.clone();
+        let ctx = self.ctx.clone();
+        let setting = self.settings.magpie_path.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(Msg::Magpie(crate::magpie::detect(setting.as_deref())));
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn locate_magpie(&mut self) {
+        if let Some(f) = rfd::FileDialog::new().set_title(t("Locate Magpie.exe")).add_filter("Magpie", &["exe"]).pick_file() {
+            self.settings.magpie_path = Some(f);
+            self.mark_settings_dirty();
+            self.detect_magpie();
+        }
+    }
+
+    pub fn open_magpie(&mut self) {
+        match self.magpie.clone().flatten() {
+            Some(m) => match crate::magpie::launch(&m) {
+                Ok(()) => self.toast(t("Magpie started. Switch the game to borderless or windowed, then press Magpie's scale hotkey.")),
+                Err(e) => self.toast(tr!("Could not start Magpie: {}", e)),
+            },
+            None => {
+                let _ = open::that(crate::magpie::RELEASES_URL);
+            }
+        }
     }
 
     /// Where downloaded / imported DLSS 5 files are assembled.
@@ -730,6 +767,7 @@ impl App {
                 }
                 Msg::UpdateProgress(f, t) => self.update = UpdateState::Applying(f, t),
                 Msg::ImportProgress(f, t) => self.importing = Some((f, t)),
+                Msg::Magpie(found) => self.magpie = Some(found),
                 Msg::CoreNeedsConfirm(zip, why) => {
                     self.importing = None;
                     self.core_confirm = Some((zip, why));

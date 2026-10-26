@@ -47,6 +47,8 @@ pub struct Settings {
     pub auto_update_check: bool,
     /// "en", "de" or "es"; None follows the Windows display language.
     pub language: Option<String>,
+    /// Magpie.exe chosen by the user; None searches the usual places.
+    pub magpie_path: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -64,6 +66,7 @@ impl Default for Settings {
             update_repo: None,
             auto_update_check: true,
             language: None,
+            magpie_path: None,
         }
     }
 }

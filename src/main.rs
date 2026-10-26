@@ -9,6 +9,7 @@ mod dist;
 mod i18n;
 mod i18n_table;
 mod library;
+mod magpie;
 mod setup;
 mod state;
 mod ui;
