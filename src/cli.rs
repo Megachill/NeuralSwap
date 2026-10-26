@@ -36,7 +36,7 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 /// Returns Some(exit code) when the arguments named a CLI command.
 pub fn run(args: &[String]) -> Option<i32> {
     let cmd = args.get(1)?.as_str();
-    if !matches!(cmd, "scan" | "install" | "restore" | "library" | "payload" | "pack-release" | "import-payload" | "get-official" | "import-core" | "install-to" | "uninstall-now" | "magpie" | "--help" | "-h") {
+    if !matches!(cmd, "scan" | "install" | "restore" | "library" | "payload" | "pack-release" | "import-payload" | "get-official" | "import-core" | "install-to" | "uninstall-now" | "magpie" | "find-core" | "check-link" | "--help" | "-h") {
         return None;
     }
     attach_console();
@@ -97,7 +97,7 @@ Release v{} ready in {}", m.version, out.display());
         "import-core" => {
             let (Some(src), Some(dest)) = (args.get(2), args.get(3).map(PathBuf::from)) else { return Some(usage()) };
             let zip = if src.starts_with("http") {
-                match crate::components::download_link(src, &mut |_, _| {}) { Ok(z) => z, Err(e) => { println!("FAILED: {e}"); return Some(2) } }
+                match crate::components::download_link(src, &mut |_, _| {}) { Ok((z, _)) => z, Err(e) => { println!("FAILED: {e}"); return Some(2) } }
             } else { PathBuf::from(src) };
             match crate::components::import_core(&zip, &dest, args.iter().any(|a| a == "--allow-unknown"), flag(args, "--sha256").as_deref()) {
                 Ok(found) => {
@@ -119,6 +119,33 @@ Release v{} ready in {}", m.version, out.display());
             Ok(()) => { println!("Uninstalled (files are removed once this process exits)"); 0 }
             Err(e) => { println!("FAILED: {e}"); 2 }
         },
+        "check-link" => {
+            let Some(url) = args.get(2) else { return Some(usage()) };
+            println!("direct: {}", crate::components::direct_link(url));
+            match crate::components::link_fingerprint(url) {
+                Ok(fp) => { println!("fingerprint: {}", if fp.is_empty() { "(none - host sends no ETag/Last-Modified/size)" } else { fp.as_str() }); 0 }
+                Err(e) => { println!("FAILED: {e}"); 2 }
+            }
+        }
+        "find-core" => {
+            let games: Vec<(String, PathBuf)> = crate::library::discover(&settings.manual_games, &settings.folders, &settings.excluded)
+                .into_iter()
+                .map(|g| (g.name, g.dir))
+                .collect();
+            let magpie = crate::magpie::detect(settings.magpie_path.as_deref());
+            let own = payload::locate(settings.payload_dir.as_deref()).map(|p| p.root);
+            let found = crate::corefind::find(&games, magpie.as_ref().map(|m| m.exe.as_path()), own.as_deref());
+            if found.is_empty() {
+                println!("No DLSS 5 core files found on this PC.");
+            }
+            for s in found {
+                println!("{}  [{}]  {:?}{}", s.label, s.dir.display(), s.model(), if s.signed { "  NVIDIA-signed (RTX 50 only)" } else { "" });
+                for f in &s.files {
+                    println!("    {} {} {}", f.name, f.version.clone().unwrap_or_default(), if f.known { "(known build)" } else { "(unrecognised build)" });
+                }
+            }
+            0
+        }
         "magpie" => {
             match crate::magpie::detect(settings.magpie_path.as_deref()) {
                 Some(m) => println!("Magpie {} at {}{}", m.version.unwrap_or_default(), m.exe.display(), if crate::magpie::is_running() { " (running)" } else { "" }),
@@ -218,7 +245,7 @@ Release v{} ready in {}", m.version, out.display());
 
 fn usage() -> i32 {
     println!(
-        "NeuralSwap {}\n\n  scan    <game dir>\n  install <game dir> [--route native|renodx|feeder] [--exe <rel path>] [--accept-anticheat]\n  restore <game dir>\n  library\n  payload\n  import-payload <zip or folder>\n  get-official <payload dir>\n  import-core <zip or link> <payload dir> [--sha256 <hash>] [--allow-unknown]\n  install-to <folder> [--no-desktop]    (setup exe: silent install)\n  uninstall-now [--remove-settings]\n  magpie                                (find Magpie for anti-cheat games)\n  pack-release [out dir] [--notes \"text\"] [--no-payload]\n\nWithout arguments the desktop app starts.",
+        "NeuralSwap {}\n\n  scan    <game dir>\n  install <game dir> [--route native|renodx|feeder] [--exe <rel path>] [--accept-anticheat]\n  restore <game dir>\n  library\n  payload\n  import-payload <zip or folder>\n  get-official <payload dir>\n  import-core <zip or link> <payload dir> [--sha256 <hash>] [--allow-unknown]\n  install-to <folder> [--no-desktop]    (setup exe: silent install)\n  uninstall-now [--remove-settings]\n  magpie                                (find Magpie for anti-cheat games)\n  find-core                             (find DLSS 5 core files on this PC)\n  check-link <url>                      (fingerprint of a core-files share link)\n  pack-release [out dir] [--notes \"text\"] [--no-payload]\n\nWithout arguments the desktop app starts.",
         env!("CARGO_PKG_VERSION")
     );
     1

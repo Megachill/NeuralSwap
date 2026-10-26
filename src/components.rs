@@ -186,13 +186,14 @@ fn agent() -> ureq::Agent {
 }
 
 /// Streams `url` to `dest` (via .part), reporting (done, total) bytes.
-fn fetch(url: &str, dest: &Path, progress: &mut dyn FnMut(u64, u64)) -> Result<(), String> {
+fn fetch(url: &str, dest: &Path, progress: &mut dyn FnMut(u64, u64)) -> Result<String, String> {
     let mut res = agent()
         .get(url)
         .header("User-Agent", concat!("NeuralSwap/", env!("CARGO_PKG_VERSION")))
         .call()
         .map_err(|e| format!("{url}: {e}"))?;
     let total = res.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok()).unwrap_or(0);
+    let fingerprint = fingerprint_of(res.headers());
     let mut reader = res.body_mut().with_config().limit(4 * 1024 * 1024 * 1024).reader();
     let part = PathBuf::from(format!("{}.part", dest.display()));
     let mut f = File::create(&part).map_err(|e| e.to_string())?;
@@ -209,7 +210,46 @@ fn fetch(url: &str, dest: &Path, progress: &mut dyn FnMut(u64, u64)) -> Result<(
     }
     drop(f);
     let _ = fs::remove_file(dest);
-    fs::rename(&part, dest).map_err(|e| e.to_string())
+    fs::rename(&part, dest).map_err(|e| e.to_string())?;
+    Ok(fingerprint)
+}
+
+/// What identifies a download without fetching it: ETag, Last-Modified and
+/// size. Empty when the host sends none of them.
+fn fingerprint_of(h: &ureq::http::HeaderMap) -> String {
+    let get = |k: &str| h.get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let size = h
+        .get("content-range")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit('/').next())
+        .map(String::from)
+        .unwrap_or_else(|| get("content-length"));
+    let parts = [get("etag"), get("last-modified"), size];
+    if parts.iter().all(|p| p.is_empty()) { String::new() } else { parts.join("|") }
+}
+
+/// The share link's fingerprint, from its headers only (asks for one byte).
+pub fn link_fingerprint(url: &str) -> Result<String, String> {
+    let res = agent()
+        .get(&direct_link(url))
+        .header("User-Agent", concat!("NeuralSwap/", env!("CARGO_PKG_VERSION")))
+        .header("Range", "bytes=0-0")
+        .call()
+        .map_err(|e| format!("{url}: {e}"))?;
+    Ok(fingerprint_of(res.headers()))
+}
+
+pub fn is_known(name: &str, sha256: &str) -> bool {
+    CORE.iter().any(|c| c.name == name && c.known.contains(&sha256))
+}
+
+/// Writes one core file to every place the payload needs it.
+pub fn place_core(name: &str, bytes: &[u8], payload: &Path) -> io::Result<()> {
+    let core = CORE.iter().find(|c| c.name == name).ok_or_else(|| io::Error::other(format!("not a core file: {name}")))?;
+    for d in core.dests {
+        write_file(payload, d, bytes)?;
+    }
+    Ok(())
 }
 
 fn write_file(payload: &Path, rel: &str, bytes: &[u8]) -> io::Result<()> {
@@ -340,9 +380,9 @@ pub struct CoreFound {
 }
 
 /// Downloads a core zip from a link into the component cache.
-pub fn download_link(url: &str, progress: &mut dyn FnMut(f32, String)) -> Result<PathBuf, String> {
+pub fn download_link(url: &str, progress: &mut dyn FnMut(f32, String)) -> Result<(PathBuf, String), String> {
     let dest = cache_dir().join("core-download.zip");
-    fetch(&direct_link(url), &dest, &mut |d, t| {
+    let fingerprint = fetch(&direct_link(url), &dest, &mut |d, t| {
         progress(if t > 0 { d as f32 / t as f32 } else { 0.0 }, format!("Downloading DLSS 5 core files  {} MB", d >> 20))
     })?;
     let mut magic = [0u8; 2];
@@ -351,7 +391,7 @@ pub fn download_link(url: &str, progress: &mut dyn FnMut(f32, String)) -> Result
         let _ = fs::remove_file(&dest);
         return Err("the link did not return a zip file (for Google Drive / OneDrive, make sure the link is shared with \"anyone with the link\")".into());
     }
-    Ok(dest)
+    Ok((dest, fingerprint))
 }
 
 /// Copies the core files found anywhere in `zip_path` into `payload`.
@@ -386,9 +426,7 @@ pub fn import_core(zip_path: &Path, payload: &Path, allow_unknown: bool, expecte
         return Err(format!("unrecognised build of {} — only install files from someone you trust", unknown.join(", ")));
     }
     for (core, bytes, _) in &found {
-        for d in core.dests {
-            write_file(payload, d, bytes).map_err(|e| e.to_string())?;
-        }
+        place_core(core.name, bytes, payload).map_err(|e| e.to_string())?;
     }
     Ok(found.into_iter().map(|(c, _, k)| CoreFound { name: c.name, known: k }).collect())
 }

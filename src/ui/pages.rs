@@ -142,12 +142,28 @@ fn update_banner(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// Status and setup of the DLSS 5 files: official downloads plus the two
-/// core files that only come from a zip or a link the user chooses.
+/// "First model 310.8" / "faster model 310.9.16" for a runtime version.
+pub fn model_label(version: Option<&str>) -> String {
+    use crate::corefind::{model_of, Model};
+    let v = version.unwrap_or("?");
+    match model_of(version) {
+        Model::First => tr!("first model ({})", v),
+        Model::Faster => tr!("faster model ({})", v),
+        Model::Unknown => v.to_string(),
+    }
+}
+
+fn is_rtx50(app: &App) -> bool {
+    app.gpu.as_ref().map(|g| g.iter().any(|r| regex::Regex::new(r"(?i)\bRTX\s*50\d{2}\b|RTX PRO .*Blackwell").unwrap().is_match(&r.name))).unwrap_or(false)
+}
+
+/// Status and setup of the DLSS 5 files: official downloads, the two core
+/// files (found on this PC, from a share link or a zip), and the model.
 fn import_row(app: &mut App, ui: &mut Ui) {
     use crate::components::{self, CORE, OFFICIAL};
     let root = app.payload.as_ref().map(|p| p.root.clone()).unwrap_or_else(|| app.payload_target());
     let busy = app.importing.clone();
+    let idle = busy.is_none();
     let missing = components::official_missing(&root);
     ui.add_space(4.0);
     ui.label(RichText::new(t("1 · Official components")).strong());
@@ -157,12 +173,14 @@ fn import_row(app: &mut App, ui: &mut Ui) {
     } else {
         let mb: u64 = missing.iter().map(|c| c.size).sum::<u64>() >> 20;
         ui.label(RichText::new(tr!("Missing: {}. Downloaded from NVIDIA, reshade.me and GitHub, pinned and SHA-256 verified.", missing.iter().map(|c| c.label).collect::<Vec<_>>().join(", "))).size(12.5).color(MUTED));
-        ui.add_enabled_ui(busy.is_none(), |ui| {
+        ui.add_enabled_ui(idle, |ui| {
             if widgets::accent_button(ui, &tr!("⬇  Download official components (~{} MB)", mb)).clicked() {
                 app.download_official();
             }
         });
     }
+
+    // ---- 2 · core files and which model is installed
     ui.add_space(6.0);
     ui.label(RichText::new(t("2 · DLSS 5 core files")).strong());
     for c in CORE {
@@ -170,15 +188,98 @@ fn import_row(app: &mut App, ui: &mut Ui) {
         let (mark, color) = if ok { ("✔", GREEN_HI) } else if c.required { ("✖", RED) } else { ("–", DIM) };
         ui.label(RichText::new(format!("{mark} {} ({}){}", t(c.label), c.name, if c.required { "" } else { t(" · optional") })).size(12.5).color(color));
     }
-    ui.label(RichText::new(t("These have no official download. Use the core zip (or full payload zip) you were given, or a link to it: OneDrive, Google Drive, Dropbox and direct links work.")).size(12.0).color(MUTED));
-    ui.add_enabled_ui(busy.is_none(), |ui| {
-        ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut app.core_link).hint_text(t("https://… link to NeuralSwap-dlss5-core.zip")).desired_width(340.0));
-            ui.add(egui::TextEdit::singleline(&mut app.core_sha).hint_text(t("SHA-256 (optional)")).desired_width(170.0));
-            if widgets::accent_button(ui, t("Download from link")).clicked() && !app.core_link.trim().is_empty() {
-                app.import_core(None, false);
+    let runtime_version = app.payload.as_ref().and_then(|p| p.nr_version.clone());
+    if runtime_version.is_some() {
+        let build = match app.runtime_signed {
+            Some(true) => t("NVIDIA original (runs on RTX 50 only)"),
+            Some(false) => t("modified build (RTX 20–50)"),
+            None => "…",
+        };
+        ui.label(RichText::new(tr!("Installed DLSS 5: {} · {}", model_label(runtime_version.as_deref()), build)).size(12.5).color(TEXT));
+        if app.runtime_signed == Some(true) && app.gpu.is_some() && !is_rtx50(app) {
+            ui.label(RichText::new(t("⚠ NVIDIA's original build only runs on RTX 50 cards. This PC needs a modified build of the same version.")).size(12.5).color(AMBER));
+        }
+        if crate::corefind::model_of(runtime_version.as_deref()) == crate::corefind::Model::First {
+            ui.label(RichText::new(t("A faster DLSS 5 model (310.9.16) exists: smaller, less VRAM, faster neural rendering. Use one found below, or import it from a zip or your share link.")).size(12.0).color(DIM));
+        }
+    }
+
+    // ---- found on this PC
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(t("Found on this PC")).strong());
+        if idle && ui.small_button(t("Search again")).clicked() {
+            app.search_core_files();
+        }
+    });
+    match app.core_sources.clone() {
+        None => {
+            ui.label(RichText::new(t("Looking for DLSS 5 files left by other tools and games…")).size(12.5).color(MUTED));
+        }
+        Some(found) if found.is_empty() => {
+            ui.label(RichText::new(t("Nothing found. Other DLSS 5 tools, earlier installs in game folders and NBA 2K27 are checked.")).size(12.5).color(DIM));
+        }
+        Some(found) => {
+            for (i, src) in found.iter().enumerate() {
+                egui::Frame::new().fill(FIELD).stroke(Stroke::new(1.0, BORDER)).corner_radius(theme::radius(8)).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            let model = src.runtime().map(|f| model_label(f.version.as_deref())).unwrap_or_else(|| t("add-ons only").to_string());
+                            ui.label(RichText::new(format!("{}  ·  {}", src.label, model)).strong());
+                            let mut facts: Vec<String> = src.files.iter().map(|f| format!("{}{}", f.name, if f.known { "" } else { t(" (unrecognised build)") })).collect();
+                            if src.runtime().is_some() {
+                                facts.push(if src.signed { t("NVIDIA original (runs on RTX 50 only)").to_string() } else { t("modified build (RTX 20–50)").to_string() });
+                            }
+                            ui.label(RichText::new(facts.join(" · ")).size(11.5).color(MUTED));
+                            ui.label(RichText::new(src.dir.display().to_string()).size(11.0).color(DIM));
+                        });
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.add_enabled_ui(idle, |ui| {
+                                if widgets::accent_button(ui, t("Use")).clicked() {
+                                    app.use_core_source(i);
+                                }
+                            });
+                        });
+                    });
+                });
             }
+        }
+    }
+
+    // ---- share link
+    ui.add_space(6.0);
+    ui.label(RichText::new(t("From a link or zip")).strong());
+    if let Some(link) = app.settings.core_link.clone() {
+        let checked = app.settings.core_link_checked.and_then(|t| chrono::DateTime::from_timestamp(t, 0)).map(|d| d.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string()).unwrap_or_default();
+        ui.label(RichText::new(tr!("Kept up to date from your link (checked {}):", checked)).size(12.5).color(GREEN_HI));
+        ui.label(RichText::new(&link).size(11.5).color(DIM));
+        if let Some(status) = &app.link_status {
+            ui.label(RichText::new(status).size(12.0).color(MUTED));
+        }
+        ui.add_enabled_ui(idle, |ui| {
+            ui.horizontal(|ui| {
+                if widgets::ghost_button(ui, t("Check now")).clicked() {
+                    app.check_core_link(true);
+                }
+                if widgets::ghost_button(ui, t("Forget link")).clicked() {
+                    app.forget_core_link();
+                }
+            });
         });
+    } else {
+        ui.label(RichText::new(t("Paste the link a friend gave you once: NeuralSwap downloads the core files and keeps them updated from it. OneDrive, Google Drive, Dropbox and direct links work.")).size(12.0).color(MUTED));
+        ui.add_enabled_ui(idle, |ui| {
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut app.core_link).hint_text(t("https://… link to NeuralSwap-dlss5-core.zip")).desired_width(340.0));
+                ui.add(egui::TextEdit::singleline(&mut app.core_sha).hint_text(t("SHA-256 (optional)")).desired_width(170.0));
+                if widgets::accent_button(ui, t("Download from link")).clicked() && !app.core_link.trim().is_empty() {
+                    app.import_core(None, false);
+                }
+            });
+        });
+    }
+    ui.add_enabled_ui(idle, |ui| {
         ui.horizontal(|ui| {
             if widgets::ghost_button(ui, t("Import core zip…")).clicked() {
                 if let Some(f) = rfd::FileDialog::new().add_filter(t("DLSS 5 core zip"), &["zip"]).pick_file() {
@@ -196,6 +297,9 @@ fn import_row(app: &mut App, ui: &mut Ui) {
                 }
             }
         });
+        if app.payload.as_ref().map(|p| p.has_neural_rendering() && p.addon.is_some()).unwrap_or(false) && widgets::ghost_button(ui, t("⬆  Export core zip for friends…")).clicked() {
+            app.export_core_zip();
+        }
     });
     if let Some((zip, why)) = app.core_confirm.clone() {
         egui::Frame::new().fill(RED_DARK).stroke(Stroke::new(1.0, RED)).corner_radius(theme::radius(8)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
@@ -302,7 +406,7 @@ pub fn home(app: &mut App, ui: &mut Ui) {
                         Some(p) => {
                             let v = |o: &Option<String>| o.clone().unwrap_or_else(|| "—".into());
                             widgets::kv_row(ui, t("DLSS Super Resolution"), RichText::new(v(&p.dlss_version)).color(GREEN_HI));
-                            widgets::kv_row(ui, t("DLSS 5 Neural Rendering"), RichText::new(v(&p.nr_version)).color(GREEN_HI));
+                            widgets::kv_row(ui, t("DLSS 5 Neural Rendering"), RichText::new(model_label(p.nr_version.as_deref())).color(GREEN_HI));
                             widgets::kv_row(ui, t("ReShade (add-on build)"), RichText::new(v(&p.reshade_version)));
                             widgets::kv_row(ui, t("RenoDX DLSS 5 consumer"), RichText::new(p.addon.as_deref().and_then(crate::core::pe::file_version).unwrap_or_else(|| (if p.addon.is_some() { t("bundled") } else { t("missing") }).to_string())).color(if p.addon.is_some() { TEXT } else { RED }));
                             widgets::kv_row(ui, t("RenoDX DLSS Tool (multipass)"), RichText::new(if p.multipass_addon.is_some() { t("bundled") } else { "—" }));

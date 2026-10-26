@@ -49,6 +49,14 @@ pub struct Settings {
     pub language: Option<String>,
     /// Magpie.exe chosen by the user; None searches the usual places.
     pub magpie_path: Option<PathBuf>,
+    /// Share link the DLSS 5 core files came from; checked for updates.
+    pub core_link: Option<String>,
+    pub core_link_fp: Option<String>,
+    pub core_link_sha: Option<String>,
+    /// Unrecognised builds from this link were accepted once: later
+    /// updates from it apply without asking again.
+    pub core_link_trusted: bool,
+    pub core_link_checked: Option<i64>,
 }
 
 impl Default for Settings {
@@ -67,6 +75,11 @@ impl Default for Settings {
             auto_update_check: true,
             language: None,
             magpie_path: None,
+            core_link: None,
+            core_link_fp: None,
+            core_link_sha: None,
+            core_link_trusted: false,
+            core_link_checked: None,
         }
     }
 }

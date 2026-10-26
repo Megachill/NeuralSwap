@@ -82,6 +82,20 @@ Home or Settings → **DLSS 5 files**, in two steps:
    are refused unless you choose **Install anyway**. NeuralSwap never downloads these
    from third-party mirrors.
 
+**Found on this PC:** NeuralSwap also looks for core files that are already on the PC —
+other DLSS 5 tools (found through Windows' installed-apps list, e.g. the original DLSS 5
+Swapper), Magpie's folder, Downloads / Desktop / Documents, and game folders (earlier
+installs, and NBA 2K27, which ships NVIDIA's own runtime) — and uses one with a click.
+
+**Share link:** after the first import from a link, NeuralSwap remembers it and checks it
+at start-up (at most twice a day, headers only); when the zip behind the link changes it
+downloads and installs the new core files. Settings / Home → **Export core zip for
+friends** creates the file to upload.
+
+**Which DLSS 5:** the runtime version tells the model — 310.8 is the first model, 310.9+
+the faster one — and the signature tells NVIDIA's original build (runs on RTX 50 only)
+from a modified build (RTX 20–50).
+
 A full `NeuralSwap-payload.zip` or an existing payload folder can still be imported
 as a whole, and an original DLSS 5 Swapper install is found automatically.
 

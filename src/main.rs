@@ -4,6 +4,7 @@ mod art;
 mod cli;
 mod components;
 mod core;
+mod corefind;
 mod dist;
 #[macro_use]
 mod i18n;

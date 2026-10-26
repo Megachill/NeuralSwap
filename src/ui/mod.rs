@@ -171,6 +171,12 @@ enum Msg {
     /// A core zip holds builds we do not recognise: ask before installing.
     CoreNeedsConfirm(PathBuf, String),
     Magpie(Option<crate::magpie::Magpie>),
+    CoreSources(Vec<crate::corefind::CoreSource>),
+    RuntimeSigned(Option<bool>),
+    CoreLinkSaved { url: String, fp: String, sha: String, trusted: bool },
+    CoreLinkPending(String, String),
+    CoreLinkChecked(Result<bool, String>),
+    Toast(String),
 }
 
 #[derive(Clone)]
@@ -222,6 +228,14 @@ pub struct App {
     pub core_confirm: Option<(PathBuf, String)>,
     /// Some(None) once a search found nothing; None while it runs.
     pub magpie: Option<Option<crate::magpie::Magpie>>,
+    /// DLSS 5 core files found elsewhere on the PC; None while searching.
+    pub core_sources: Option<Vec<crate::corefind::CoreSource>>,
+    /// Whether the payload's neural runtime is NVIDIA's intact build.
+    pub runtime_signed: Option<bool>,
+    /// A share link whose download waits for "Install anyway".
+    pending_link: Option<(String, String)>,
+    pub link_status: Option<String>,
+    core_search_started: bool,
     ctx: egui::Context,
 }
 
@@ -328,6 +342,11 @@ impl App {
             core_sha: String::new(),
             core_confirm: None,
             magpie: None,
+            core_sources: None,
+            runtime_signed: None,
+            pending_link: None,
+            link_status: None,
+            core_search_started: false,
             ctx: ctx.clone(),
         };
         app.history = app.history_store.list(&[]);
@@ -345,6 +364,8 @@ impl App {
         }
         app.discover();
         app.detect_magpie();
+        app.check_runtime_signature();
+        app.check_core_link(false);
         if app.settings.auto_update_check {
             app.check_updates(false);
         }
@@ -472,15 +493,33 @@ impl App {
         let dest = self.payload_target();
         let link = self.core_link.trim().to_string();
         let sha = self.core_sha.trim().to_string();
+        // A confirmed download that came from a link still belongs to it.
+        let mut from_link = if zip.is_none() { Some((link.clone(), String::new())) } else { self.pending_link.take() };
+        let tx = self.tx.clone();
         self.run_setup(move |p| {
             let zip = match zip {
                 Some(z) => z,
-                None => crate::components::download_link(&link, p).map_err(SetupError::Failed)?,
+                None => {
+                    let (z, fp) = crate::components::download_link(&link, p).map_err(SetupError::Failed)?;
+                    from_link = Some((link.clone(), fp));
+                    z
+                }
             };
-            p(0.95, "Checking the core files".into());
+            p(0.95, t("Checking the core files").into());
             match crate::components::import_core(&zip, &dest, allow_unknown, Some(&sha)) {
-                Ok(_) => Ok(()),
-                Err(e) if e.starts_with("unrecognised build") => Err(SetupError::Unknown(zip, e)),
+                Ok(_) => {
+                    if let Some((url, fp)) = from_link {
+                        let zip_sha = crate::dist::sha256_file(&zip).unwrap_or_default();
+                        let _ = tx.send(Msg::CoreLinkSaved { url, fp, sha: zip_sha, trusted: allow_unknown });
+                    }
+                    Ok(())
+                }
+                Err(e) if e.starts_with("unrecognised build") => {
+                    if let Some((url, fp)) = from_link {
+                        let _ = tx.send(Msg::CoreLinkPending(url, fp));
+                    }
+                    Err(SetupError::Unknown(zip, e))
+                }
                 Err(e) => Err(SetupError::Failed(e)),
             }
         });
@@ -532,6 +571,121 @@ impl App {
 
     pub fn reload_payload(&mut self) {
         self.payload = payload::locate(self.settings.payload_dir.as_deref());
+        self.check_runtime_signature();
+    }
+
+    /// Hashes the 160 MB runtime for its signature, so off the UI thread.
+    pub fn check_runtime_signature(&mut self) {
+        self.runtime_signed = None;
+        let Some(file) = self.payload.as_ref().and_then(|p| p.file("nvngx_dlssnr.dll")).map(|f| f.path.clone()) else { return };
+        let tx = self.tx.clone();
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(Msg::RuntimeSigned(Some(crate::corefind::nvidia_signed(&file))));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Looks for DLSS 5 core files other tools or games left on the PC.
+    pub fn search_core_files(&mut self) {
+        self.core_search_started = true;
+        self.core_sources = None;
+        let games: Vec<(String, PathBuf)> = self.games.iter().map(|g| (g.lib.name.clone(), g.lib.dir.clone())).collect();
+        let magpie = self.magpie.clone().flatten().map(|m| m.exe);
+        let own = self.payload_target();
+        let tx = self.tx.clone();
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let found = crate::corefind::find(&games, magpie.as_deref(), Some(&own));
+            let _ = tx.send(Msg::CoreSources(found));
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn use_core_source(&mut self, idx: usize) {
+        let Some(src) = self.core_sources.as_ref().and_then(|s| s.get(idx)).cloned() else { return };
+        let dest = self.payload_target();
+        self.run_setup(move |p| {
+            p(0.5, tr!("Copying from {}", src.label));
+            crate::corefind::use_source(&src, &dest).map_err(SetupError::Failed)
+        });
+    }
+
+    /// Checks the remembered share link for new core files: headers first,
+    /// a download only when they changed. At most twice a day unless forced.
+    pub fn check_core_link(&mut self, force: bool) {
+        let Some(url) = self.settings.core_link.clone() else { return };
+        let now = chrono::Utc::now().timestamp();
+        if !force && self.settings.core_link_checked.map(|t| now - t < 12 * 3600).unwrap_or(false) {
+            return;
+        }
+        if self.importing.is_some() || self.job.is_some() {
+            return;
+        }
+        self.settings.core_link_checked = Some(now);
+        self.settings_dirty = true;
+        self.link_status = Some(t("Checking your link…").into());
+        let (old_fp, old_sha, trusted) = (self.settings.core_link_fp.clone(), self.settings.core_link_sha.clone(), self.settings.core_link_trusted);
+        let dest = self.payload_target();
+        let tx = self.tx.clone();
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let send = |m: Msg| {
+                let _ = tx.send(m);
+                ctx.request_repaint();
+            };
+            let fp_now = crate::components::link_fingerprint(&url).unwrap_or_default();
+            if !force && !fp_now.is_empty() && Some(&fp_now) == old_fp.as_ref() {
+                return send(Msg::CoreLinkChecked(Ok(false)));
+            }
+            let (zip, fp) = match crate::components::download_link(&url, &mut |_, _| {}) {
+                Ok(v) => v,
+                Err(e) => return send(Msg::CoreLinkChecked(Err(e))),
+            };
+            let sha = crate::dist::sha256_file(&zip).unwrap_or_default();
+            if Some(&sha) == old_sha.as_ref() {
+                send(Msg::CoreLinkSaved { url, fp, sha, trusted });
+                return send(Msg::CoreLinkChecked(Ok(false)));
+            }
+            match crate::components::import_core(&zip, &dest, trusted, None) {
+                Ok(_) => {
+                    send(Msg::CoreLinkSaved { url, fp, sha, trusted });
+                    send(Msg::CoreLinkChecked(Ok(true)));
+                }
+                Err(e) if e.starts_with("unrecognised build") => {
+                    send(Msg::CoreLinkPending(url, fp));
+                    send(Msg::CoreNeedsConfirm(zip, e));
+                }
+                Err(e) => send(Msg::CoreLinkChecked(Err(e))),
+            }
+        });
+    }
+
+    pub fn forget_core_link(&mut self) {
+        self.settings.core_link = None;
+        self.settings.core_link_fp = None;
+        self.settings.core_link_sha = None;
+        self.settings.core_link_trusted = false;
+        self.settings.core_link_checked = None;
+        self.link_status = None;
+        self.settings_dirty = true;
+    }
+
+    /// The small zip of core files to upload and share with friends.
+    pub fn export_core_zip(&mut self) {
+        let Some(root) = self.payload.as_ref().map(|p| p.root.clone()) else { return };
+        let Some(out) = rfd::FileDialog::new().set_file_name(crate::components::CORE_ZIP).add_filter("zip", &["zip"]).save_file() else { return };
+        self.toast(t("Creating the core zip…"));
+        let tx = self.tx.clone();
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let msg = match crate::components::pack_core(&root, &out) {
+                Ok(()) => Msg::Toast(tr!("Saved {}. Upload it to OneDrive, Google Drive or Dropbox, share it with \"anyone with the link\" and send your friends that link.", out.display())),
+                Err(e) => Msg::Toast(tr!("Import failed: {}", e)),
+            };
+            let _ = tx.send(msg);
+            ctx.request_repaint();
+        });
     }
 
     pub fn mark_settings_dirty(&mut self) {
@@ -714,6 +868,9 @@ impl App {
                     }
                     self.games = entries;
                     self.refresh_history();
+                    if !self.core_search_started {
+                        self.search_core_files();
+                    }
                 }
                 Msg::Scanned(key, scan) => {
                     if let Some(g) = self.games.iter_mut().find(|g| g.key == key) {
@@ -780,6 +937,30 @@ impl App {
                 Msg::UpdateProgress(f, t) => self.update = UpdateState::Applying(f, t),
                 Msg::ImportProgress(f, t) => self.importing = Some((f, t)),
                 Msg::Magpie(found) => self.magpie = Some(found),
+                Msg::CoreSources(found) => self.core_sources = Some(found),
+                Msg::RuntimeSigned(s) => self.runtime_signed = s,
+                Msg::CoreLinkSaved { url, fp, sha, trusted } => {
+                    self.settings.core_link = Some(url);
+                    self.settings.core_link_fp = Some(fp).filter(|f| !f.is_empty());
+                    self.settings.core_link_sha = Some(sha).filter(|s| !s.is_empty());
+                    self.settings.core_link_trusted |= trusted;
+                    self.settings.core_link_checked = Some(chrono::Utc::now().timestamp());
+                    self.core_link.clear();
+                    self.settings_dirty = true;
+                }
+                Msg::CoreLinkPending(url, fp) => self.pending_link = Some((url, fp)),
+                Msg::CoreLinkChecked(result) => {
+                    self.link_status = Some(match result {
+                        Ok(true) => {
+                            self.reload_payload();
+                            self.toast(t("Your DLSS 5 core files were updated from your link."));
+                            t("Updated just now.").to_string()
+                        }
+                        Ok(false) => t("Up to date.").to_string(),
+                        Err(e) => tr!("Could not check the link: {}", e),
+                    });
+                }
+                Msg::Toast(text) => self.toast(text),
                 Msg::CoreNeedsConfirm(zip, why) => {
                     self.importing = None;
                     self.core_confirm = Some((zip, why));
