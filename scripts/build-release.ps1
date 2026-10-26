@@ -29,6 +29,14 @@ foreach ($p in @($env:USERPROFILE, $cargoHome, $root)) {
 }
 
 $out = Join-Path $root 'release'
-Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
-if ($NoPayload) { & $exe pack-release $out --notes $Notes --no-payload } else { & $exe pack-release $out --notes $Notes }
+# Only what pack-release writes; anything else kept in release\ stays.
+$generated = @('NeuralSwap-Setup.exe', 'NeuralSwap.exe', 'NeuralSwap-payload.zip', 'update.json',
+    'private\NeuralSwap-Setup-Full.exe', 'private\NeuralSwap-payload.zip', 'private\NeuralSwap-dlss5-core.zip')
+foreach ($f in $generated) { Remove-Item -Force (Join-Path $out $f) -ErrorAction SilentlyContinue }
+# NeuralSwap.exe is a GUI-subsystem program, so PowerShell would not wait
+# for it on its own.
+$packArgs = @('pack-release', "`"$out`"", '--notes', "`"$Notes`"")
+if ($NoPayload) { $packArgs += '--no-payload' }
+Start-Process -FilePath $exe -ArgumentList $packArgs -Wait -NoNewWindow
+if (-not (Test-Path (Join-Path $out 'update.json'))) { throw "pack-release did not finish (no update.json)" }
 Write-Host "`nUpload the files in $out (not the private folder) to a GitHub release tagged v<version>."
