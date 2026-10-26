@@ -45,6 +45,8 @@ pub struct Settings {
     /// GitHub "owner/repo" to update from; falls back to the built-in one.
     pub update_repo: Option<String>,
     pub auto_update_check: bool,
+    /// "en", "de" or "es"; None follows the Windows display language.
+    pub language: Option<String>,
 }
 
 impl Default for Settings {
@@ -61,6 +63,7 @@ impl Default for Settings {
             hide_unsupported: false,
             update_repo: None,
             auto_update_check: true,
+            language: None,
         }
     }
 }

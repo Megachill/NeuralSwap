@@ -46,6 +46,33 @@ pub struct Error {
     pub detail: String,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+pub const ERROR_CODES: &[&str] = &[
+    "errAntiCheatConsent",
+    "errManagedModpack",
+    "errLoaderConflict",
+    "errRuntimeArchitecture",
+    "errReShadeArchitecture",
+    "errBackupInvalid",
+    "errGameRunning",
+    "errJobBusy",
+    "errBackendRecovery",
+    "errNoWriteAccess",
+    "errMultipassMissing",
+    "errNoNeuralRuntime",
+    "errNoPayload",
+    "errNoBackup",
+    "errReShadeInstall",
+    "errReShadeSetupMissing",
+    "errUnsafeTarget",
+    "errFeederSupportMissing",
+    "errFeederApiUnsupported",
+    "errShaderInstall",
+    "errNoExecutable",
+    "errRouteUnsupported",
+    "errIo",
+];
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub fn fail(code: &'static str, detail: impl Into<String>) -> Error {

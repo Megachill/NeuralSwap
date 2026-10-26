@@ -5,6 +5,9 @@ mod cli;
 mod components;
 mod core;
 mod dist;
+#[macro_use]
+mod i18n;
+mod i18n_table;
 mod library;
 mod setup;
 mod state;

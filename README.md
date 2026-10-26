@@ -47,6 +47,13 @@ private sharing, `release\private\` gets `NeuralSwap-dlss5-core.zip` (the two co
 files, ~116 MB), a full payload zip and a full setup — never upload that folder.
 Updates replace only the app and keep the local DLSS files.
 
+## Languages
+
+English, Deutsch and Español. The first start follows the Windows display language;
+Settings → **Language** switches instantly. Technical log lines stay English so they
+can be pasted into bug reports. A unit test fails the build when any on-screen text
+is missing a German or Spanish translation.
+
 ## Getting the DLSS 5 files
 
 Home or Settings → **DLSS 5 files**, in two steps:

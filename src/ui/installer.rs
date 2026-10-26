@@ -1,6 +1,7 @@
 //! The setup window: shown when NeuralSwap-Setup.exe runs from outside the
 //! install folder, and for `--uninstall` from Settings → Apps.
 
+use crate::i18n::t;
 use super::theme::{self, *};
 use super::widgets;
 use crate::setup;
@@ -42,7 +43,8 @@ pub fn run(mode: Mode) -> eframe::Result<()> {
         let rgba = i.to_rgba8();
         egui::IconData { width: rgba.width(), height: rgba.height(), rgba: rgba.into_raw() }
     });
-    let title = if mode == Mode::Install { "NeuralSwap Setup" } else { "Uninstall NeuralSwap" };
+    crate::i18n::init(crate::state::Settings::load().language.as_deref());
+    let title = if mode == Mode::Install { t("NeuralSwap Setup") } else { t("Uninstall NeuralSwap") };
     let mut viewport = egui::ViewportBuilder::default().with_title(title).with_inner_size([620.0, 430.0]).with_resizable(false);
     if let Some(icon) = icon {
         viewport = viewport.with_icon(Arc::new(icon));
@@ -116,7 +118,7 @@ impl eframe::App for Installer {
                         if r.is_ok() {
                             self.progress = 1.0;
                             if self.mode == Mode::Uninstall {
-                                self.status = "Removed. The folder is deleted when this window closes.".into();
+                                self.status = t("Removed. The folder is deleted when this window closes.").into();
                             }
                         }
                         self.result = Some(r);
@@ -137,26 +139,26 @@ impl eframe::App for Installer {
                         ui.label(RichText::new("Neural").font(theme::bold(30.0)));
                         ui.label(RichText::new("Swap").font(theme::bold(30.0)).color(GREEN_HI));
                     });
-                    ui.label(RichText::new(format!("Version {}  ·  DLSS 5 neural rendering for your games", env!("CARGO_PKG_VERSION"))).color(MUTED));
+                    ui.label(RichText::new(tr!("Version {}  ·  DLSS 5 neural rendering for your games", env!("CARGO_PKG_VERSION"))).color(MUTED));
                 });
             });
             ui.add_space(18.0);
             match self.mode {
                 Mode::Install => {
                     let text = match &self.existing {
-                        Some(v) if v.as_str() != env!("CARGO_PKG_VERSION") => format!("Updates the installed version {v}. Settings, history and game backups are kept."),
-                        Some(_) => "Repairs the existing installation. Settings, history and game backups are kept.".to_string(),
-                        None if self.has_payload => "Installs NeuralSwap for your Windows account — no administrator rights needed. Includes the DLSS 5 files (~250 MB).".to_string(),
-                        None => "Installs NeuralSwap for your Windows account — no administrator rights needed. The DLSS 5 files are not included: import them after installing (Settings → Payload folder → Import).".to_string(),
+                        Some(v) if v.as_str() != env!("CARGO_PKG_VERSION") => tr!("Updates the installed version {}. Settings, history and game backups are kept.", v),
+                        Some(_) => t("Repairs the existing installation. Settings, history and game backups are kept.").to_string(),
+                        None if self.has_payload => t("Installs NeuralSwap for your Windows account — no administrator rights needed. Includes the DLSS 5 files (~250 MB).").to_string(),
+                        None => t("Installs NeuralSwap — no administrator rights needed. The DLSS 5 files are not included: set them up after installing (Home → DLSS 5 files).").to_string(),
                     };
                     ui.label(text);
                     ui.add_space(6.0);
                     ui.add_enabled_ui(!self.running && self.result.is_none(), |ui| {
-                        ui.label(RichText::new("Install folder").size(12.5).color(MUTED));
+                        ui.label(RichText::new(t("Install folder")).size(12.5).color(MUTED));
                         ui.horizontal(|ui| {
                             ui.add(egui::TextEdit::singleline(&mut self.dir).desired_width(430.0));
-                            if widgets::ghost_button(ui, "Browse…").clicked() {
-                                if let Some(p) = rfd::FileDialog::new().set_title("Choose where to install NeuralSwap").pick_folder() {
+                            if widgets::ghost_button(ui, t("Browse…")).clicked() {
+                                if let Some(p) = rfd::FileDialog::new().set_title(t("Choose where to install NeuralSwap")).pick_folder() {
                                     self.dir = setup::normalize_choice(&p).display().to_string();
                                 }
                             }
@@ -164,19 +166,19 @@ impl eframe::App for Installer {
                         if let Some(old) = &self.existing_dir {
                             let chosen = setup::normalize_choice(std::path::Path::new(self.dir.trim()));
                             if chosen.to_string_lossy().to_lowercase() != old.to_string_lossy().to_lowercase() {
-                                ui.label(RichText::new(format!("NeuralSwap will move here from {} (DLSS files included).", old.display())).size(12.0).color(AMBER));
+                                ui.label(RichText::new(tr!("NeuralSwap will move here from {} (DLSS files included).", old.display())).size(12.0).color(AMBER));
                             }
                         }
-                        ui.checkbox(&mut self.desktop, "Create a desktop shortcut");
-                        ui.checkbox(&mut self.launch, "Start NeuralSwap when finished");
+                        ui.checkbox(&mut self.desktop, t("Create a desktop shortcut"));
+                        ui.checkbox(&mut self.launch, t("Start NeuralSwap when finished"));
                     });
                 }
                 Mode::Uninstall => {
-                    ui.label("Removes NeuralSwap, its DLSS 5 payload, the shortcuts and the Apps entry.");
-                    ui.label(RichText::new("Games you installed DLSS 5 into are not changed. Restore them first if you want their original files back — or later with the original DLSS 5 Swapper, which reads the same backups.").size(12.5).color(AMBER));
+                    ui.label(t("Removes NeuralSwap, its DLSS 5 payload, the shortcuts and the Apps entry."));
+                    ui.label(RichText::new(t("Games you installed DLSS 5 into are not changed. Restore them first if you want their original files back — or later with the original DLSS 5 Swapper, which reads the same backups.")).size(12.5).color(AMBER));
                     ui.add_space(6.0);
                     ui.add_enabled_ui(!self.running && self.result.is_none(), |ui| {
-                        ui.checkbox(&mut self.remove_settings, "Also delete settings, history and cached artwork");
+                        ui.checkbox(&mut self.remove_settings, t("Also delete settings, history and cached artwork"));
                     });
                 }
             }
@@ -192,16 +194,16 @@ impl eframe::App for Installer {
             }
             match &self.result {
                 Some(Ok(_)) => {
-                    ui.label(RichText::new(if self.mode == Mode::Install { "✔ NeuralSwap is installed." } else { "✔ NeuralSwap was removed." }).color(GREEN_HI).strong());
+                    ui.label(RichText::new(if self.mode == Mode::Install { t("✔ NeuralSwap is installed.") } else { t("✔ NeuralSwap was removed.") }).color(GREEN_HI).strong());
                 }
                 Some(Err(e)) => {
                     ui.label(RichText::new(format!("✖ {e}")).color(RED));
                     let needs_admin = e.starts_with("No write access");
                     ui.horizontal(|ui| {
-                        if widgets::ghost_button(ui, "Choose another folder").clicked() {
+                        if widgets::ghost_button(ui, t("Choose another folder")).clicked() {
                             self.result = None;
                         }
-                        if needs_admin && widgets::ghost_button(ui, "Run setup as administrator").clicked() {
+                        if needs_admin && widgets::ghost_button(ui, t("Run setup as administrator")).clicked() {
                             run_elevated();
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
@@ -213,17 +215,17 @@ impl eframe::App for Installer {
                 ui.horizontal(|ui| {
                     match (&self.result, self.mode) {
                         (None, Mode::Install) => {
-                            if widgets::primary_button(ui, if self.running { "Installing…" } else { "Install" }, !self.running, vec2(170.0, 42.0)).clicked() {
+                            if widgets::primary_button(ui, if self.running { t("Installing…") } else { t("Install") }, !self.running, vec2(170.0, 42.0)).clicked() {
                                 self.start(&ctx);
                             }
                         }
                         (None, Mode::Uninstall) => {
-                            if widgets::danger_button(ui, if self.running { "Removing…" } else { "Uninstall" }, !self.running, vec2(170.0, 42.0)).clicked() {
+                            if widgets::danger_button(ui, if self.running { t("Removing…") } else { t("Uninstall") }, !self.running, vec2(170.0, 42.0)).clicked() {
                                 self.start(&ctx);
                             }
                         }
                         (Some(Ok(Some(exe))), Mode::Install) => {
-                            if widgets::primary_button(ui, if self.launch { "Start NeuralSwap" } else { "Finish" }, true, vec2(170.0, 42.0)).clicked() {
+                            if widgets::primary_button(ui, if self.launch { t("Start NeuralSwap") } else { t("Finish") }, true, vec2(170.0, 42.0)).clicked() {
                                 if self.launch {
                                     let _ = std::process::Command::new(exe).spawn();
                                 }
@@ -231,12 +233,12 @@ impl eframe::App for Installer {
                             }
                         }
                         _ => {
-                            if widgets::ghost_button(ui, "Close").clicked() {
+                            if widgets::ghost_button(ui, t("Close")).clicked() {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                             }
                         }
                     }
-                    if self.result.is_none() && !self.running && widgets::ghost_button(ui, "Cancel").clicked() {
+                    if self.result.is_none() && !self.running && widgets::ghost_button(ui, t("Cancel")).clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });

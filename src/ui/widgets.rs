@@ -1,5 +1,6 @@
 //! Painted building blocks: game cards, pills, tiles, buttons, toasts.
 
+use crate::i18n::t;
 use super::theme::{self, *};
 use super::App;
 use egui::{pos2, vec2, Align2, Color32, Rect, Response, RichText, Sense, Stroke, StrokeKind, TextureHandle, Ui};
@@ -94,7 +95,7 @@ pub fn game_card(ui: &mut Ui, size: egui::Vec2, cover: Option<&TextureHandle>, i
         (Some(r), _) => Some((r, MUTED, Color32::from_black_alpha(200), BORDER)),
         (None, Some(l)) if info.dx12 => Some((l, GREEN_HI, Color32::from_rgba_unmultiplied(20, 34, 6, 230), Color32::from_rgb(60, 92, 16))),
         (None, Some(l)) => Some((l, TEXT, Color32::from_black_alpha(200), Color32::from_rgb(60, 66, 74))),
-        (None, None) if info.scanning => Some(("Scanning…", MUTED, Color32::from_black_alpha(200), BORDER)),
+        (None, None) if info.scanning => Some((t("Scanning…"), MUTED, Color32::from_black_alpha(200), BORDER)),
         _ => None,
     };
     if let Some((text, fg, bg, br)) = badge {
@@ -107,13 +108,13 @@ pub fn game_card(ui: &mut Ui, size: egui::Vec2, cover: Option<&TextureHandle>, i
     let dot = |x: f32, on: bool| {
         ui.painter().circle_filled(pos2(x, y), 3.5, if on { GREEN_HI } else { Color32::from_rgb(110, 118, 128) });
     };
-    let dlss_text = info.dlss.as_deref().map(short_version).unwrap_or_else(|| "no DLSS".into());
+    let dlss_text = info.dlss.as_deref().map(short_version).unwrap_or_else(|| t("no DLSS").into());
     dot(x, info.dlss.is_some());
     x += 8.0;
     let r = ui.painter().text(pos2(x, y), Align2::LEFT_CENTER, &dlss_text, theme::bold(11.5), TEXT);
     x = r.right() + 12.0;
     dot(x, info.addon);
-    ui.painter().text(pos2(x + 8.0, y), Align2::LEFT_CENTER, if info.installed { "DLSS 5" } else { "add-on" }, theme::bold(11.5), if info.addon { GREEN_HI } else { TEXT });
+    ui.painter().text(pos2(x + 8.0, y), Align2::LEFT_CENTER, if info.installed { "DLSS 5" } else { t("add-on") }, theme::bold(11.5), if info.addon { GREEN_HI } else { TEXT });
 
     // Title.
     let title_rect = Rect::from_min_max(pos2(rect.left() + 10.0, cover_rect.bottom() + 6.0), rect.max - vec2(8.0, 4.0));

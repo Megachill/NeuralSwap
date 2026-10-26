@@ -8,6 +8,7 @@ mod sheet;
 pub mod theme;
 mod widgets;
 
+use crate::i18n::t;
 use crate::art;
 use crate::core::apply::{self, InstallConfig, Route};
 use crate::core::guards::{self, Gpu};
@@ -226,6 +227,7 @@ impl App {
         theme::install(ctx);
         let (tx, rx) = channel();
         let settings = Settings::load();
+        crate::i18n::init(settings.language.as_deref());
         let cache = ScanCache::load();
         let payload = payload::locate(settings.payload_dir.as_deref());
 
@@ -380,7 +382,7 @@ impl App {
             return;
         }
         let Some(dest) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("payload"))) else { return };
-        self.importing = Some((0.0, "Starting import".into()));
+        self.importing = Some((0.0, t("Starting import").into()));
         let tx = self.tx.clone();
         let ctx = self.ctx.clone();
         std::thread::spawn(move || {
@@ -404,7 +406,7 @@ impl App {
             return;
         }
         self.core_confirm = None;
-        self.importing = Some((0.0, "Starting".into()));
+        self.importing = Some((0.0, t("Starting").into()));
         let tx = self.tx.clone();
         let ctx = self.ctx.clone();
         let dest = self.payload_target();
@@ -450,10 +452,10 @@ impl App {
     pub fn apply_update(&mut self) {
         let UpdateState::Available(av) = self.update.clone() else { return };
         if self.job.is_some() {
-            self.toast("Wait for the running install to finish first.");
+            self.toast(t("Wait for the running install to finish first."));
             return;
         }
-        self.update = UpdateState::Applying(0.0, "Starting download".into());
+        self.update = UpdateState::Applying(0.0, t("Starting download").into());
         let tx = self.tx.clone();
         let ctx = self.ctx.clone();
         let payload = self.payload.as_ref().map(|p| p.root.clone());
@@ -582,7 +584,7 @@ impl App {
         if let Some(s) = self.sheet.as_mut() {
             s.log.clear();
             s.last_error = None;
-            s.log.push(Event::info(format!("Installing into {name} via {} …", route.label())));
+            s.log.push(Event::info(tr!("Installing into {} via {} …", name, t(route.label()))));
         }
         self.job = Some(Job { key: key.to_string(), kind: JobKind::Install });
         let tx = self.tx.clone();
@@ -616,7 +618,7 @@ impl App {
         if let Some(s) = self.sheet.as_mut() {
             s.log.clear();
             s.last_error = None;
-            s.log.push(Event::info(format!("Restoring {name} …")));
+            s.log.push(Event::info(tr!("Restoring {} …", name)));
         }
         self.job = Some(Job { key: key.to_string(), kind: JobKind::Restore });
         let tx = self.tx.clone();
@@ -705,12 +707,12 @@ impl App {
                 Msg::JobDone { key, error } => {
                     self.job = None;
                     match error {
-                        None => self.toast("Done."),
+                        None => self.toast(t("Done.")),
                         Some(e) => {
                             if let Some(s) = self.sheet.as_mut().filter(|s| s.key == key) {
                                 s.last_error = Some(e.code);
                             }
-                            self.toast(format!("Failed: {}", e.message()));
+                            self.toast(tr!("Failed: {}", t(e.message())));
                         }
                     }
                     self.rescan(&key);
@@ -742,12 +744,12 @@ impl App {
                             let here = self.payload.as_ref().map(|p| p.root == dest).unwrap_or(false);
                             let complete = self.payload.as_ref().map(|p| p.complete()).unwrap_or(false);
                             self.toast(match (complete, here) {
-                                (true, true) => "DLSS 5 files ready.",
-                                (true, false) => "Done. Another complete payload folder is in use. Check Settings.",
-                                (false, _) => "Done. Still missing: see the DLSS 5 files card.",
+                                (true, true) => t("DLSS 5 files ready."),
+                                (true, false) => t("Done. Another complete payload folder is in use. Check Settings."),
+                                (false, _) => t("Done. Still missing: see the DLSS 5 files card."),
                             });
                         }
-                        Err(e) => self.toast(format!("Import failed: {e}")),
+                        Err(e) => self.toast(tr!("Import failed: {}", e)),
                     }
                 }
                 Msg::UpdateDone(result) => match result {
@@ -867,7 +869,7 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path, done: &mut u64, total
             copy_tree(&e.path(), &target, done, total, progress)?;
         } else {
             *done += std::fs::copy(e.path(), &target)?;
-            progress(*done as f32 / total.max(1) as f32, format!("Copying DLSS 5 files  {} / {} MB", *done >> 20, total >> 20));
+            progress(*done as f32 / total.max(1) as f32, tr!("Copying DLSS 5 files  {} / {} MB", *done >> 20, total >> 20));
         }
     }
     Ok(())
@@ -884,7 +886,7 @@ pub fn import_into(src: &std::path::Path, dest: &std::path::Path, progress: &mut
         let total = crate::dist::payload_size(src);
         copy_tree(src, &staging, &mut 0, total, progress).map_err(|e| e.to_string())?;
     } else {
-        crate::dist::extract(src, false, &staging, &mut |d, t| progress(d as f32 / t.max(1) as f32, format!("Extracting DLSS 5 files  {} / {} MB", d >> 20, t >> 20)))
+        crate::dist::extract(src, false, &staging, &mut |d, t| progress(d as f32 / t.max(1) as f32, tr!("Extracting DLSS 5 files  {} / {} MB", d >> 20, t >> 20)))
             .map_err(|e| e.to_string())?;
     }
     if payload::scan_payload(&staging).is_none() {
